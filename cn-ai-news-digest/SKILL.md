@@ -1,12 +1,12 @@
 ---
 name: cn-ai-news-digest
 version: "1.1.0"
-description: "国内顶级科技媒体 AI 资讯日报。从7个中文科技媒体 RSS 并行抓取 AI 新闻，经去重和筛选后，由（本Agent自身）LLM 智能分类为四大板块：AI大模型、AI软件产品、AI硬件产品、AI公司股票，每类不少于5条，输出 Markdown 表格。当用户说AI资讯、AI新闻、今天的AI动态、AI日报等时触发。"
+description: "国内顶级科技媒体 AI 资讯日报。从9个中文科技媒体（含2个微信公众号源）RSS 并行抓取 AI 新闻，经去重和筛选后，由（本Agent自身）LLM 智能分类为四大板块：AI大模型、AI软件产品、AI硬件产品、AI公司股票，每类不少于5条，输出 Markdown 表格。当用户说AI资讯、AI新闻、今天的AI动态、AI日报等时触发。"
 ---
 
 # CN AI News Digest v1.1.0
 
-国内 AI 行业资讯日报，覆盖 7 个中文科技媒体，全自动流水线处理。
+国内 AI 行业资讯日报，覆盖 9 个中文科技媒体（含2个微信公众号源），全自动流水线处理。
 
 ## Pipeline 总览
 
@@ -27,9 +27,11 @@ RSS抓取(Python) → 去重(Python) → LLM分类(OpenClaw Agent自身) → 输
 | 爱范儿 | `https://www.ifanr.com/feed` |
 | 钛媒体 | `https://www.tmtpost.com/rss` |
 | 雷锋网 | `https://www.leiphone.com/feed` |
+| 机器之心公众号 | `https://supsub.net/feed/public/58f382c9/rss` |
+| 智能涌现公众号 | `https://supsub.net/feed/public/bb93f651/rss` |
 
 Python 脚本职责：
-- 并行抓取 7 个 RSS feed
+- 并行抓取 9 个 RSS feed
 - XML 解析失败时自动降级为正则提取（兼容格式异常的 feed）
 - 提取字段：title、link、description、pubDate、source_name
 - AI 关键词预过滤（宽松匹配）

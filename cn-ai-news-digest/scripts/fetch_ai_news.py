@@ -27,7 +27,9 @@ RSS_FEEDS = {
     "InfoQ": "https://www.infoq.cn/feed",
     "爱范儿": "https://www.ifanr.com/feed",
     "钛媒体": "https://www.tmtpost.com/rss",
-    "雷锋网": "https://www.leiphone.com/feed"
+    "雷锋网": "https://www.leiphone.com/feed",
+    "机器之心公众号": "https://supsub.net/feed/public/58f382c9/rss",
+    "智能涌现公众号": "https://supsub.net/feed/public/bb93f651/rss"
 }
 
 # 宽松AI关键词匹配

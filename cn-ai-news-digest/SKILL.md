@@ -29,6 +29,7 @@ RSS抓取(Python) → 去重(Python) → LLM分类(OpenClaw Agent自身) → 输
 | 雷锋网 | `https://www.leiphone.com/feed` |
 | 机器之心公众号 | `https://supsub.net/feed/public/58f382c9/rss` |
 | 智能涌现公众号 | `https://supsub.net/feed/public/bb93f651/rss` |
+| 智东西 | `https://zhidx.com/rss.xml` |
 
 Python 脚本职责：
 - 并行抓取 9 个 RSS feed

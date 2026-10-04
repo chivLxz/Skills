@@ -1,0 +1,109 @@
+{
+  "_comment": "统一数据模板。复制此文件后填入真实数据，删除所有下划线开头的键。Excel 与 Word 都从这一份数据渲染，两份内容因此不可能不一致。运行：validate.py 先校验，再 build_all.py 同时产出两份文件。",
+  "meta": {
+    "title": "报告标题",
+    "subtitle": "一句话说明范围与时间口径",
+    "collected_at": "YYYY-MM-DD"
+  },
+  "main_sheet_name": "主表",
+  "main_notes": "状态口径说明与统计基准日期。缺失值统一写 未查到 / 未公开 / 需联系主办方 / 待定，不要留空。",
+  "columns": [
+    { "key": "name", "title": "名称", "width": 30 },
+    { "key": "status", "title": "状态", "width": 11 },
+    { "key": "deadline_text", "title": "关键时间", "width": 22 },
+    { "key": "organizer", "title": "主办方", "width": 18 },
+    { "key": "eligibility", "title": "身份门槛", "width": 24, "wrap": true },
+    { "key": "how_to_enter", "title": "参与方式", "width": 28, "wrap": true },
+    { "key": "why", "title": "对本用户的价值", "width": 42, "wrap": true }
+  ],
+  "status_summary": true,
+  "entries": [
+    {
+      "id": "stable-slug-1",
+      "name": "示例条目名称",
+      "status": "open",
+      "deadline": "2026-12-01",
+      "verified": "YYYY-MM-DD",
+      "source": "https://official.example.com/page",
+      "fields": {
+        "name": "示例条目名称",
+        "deadline_text": "2026-11-01 至 12-01",
+        "organizer": "示例主办方",
+        "eligibility": "个人可参加",
+        "how_to_enter": "官网注册",
+        "why": "说明它对本次调研对象的具体价值，而非宣传语"
+      },
+      "doc": {
+        "intro": "开篇即结论：一句话说清该条目的核心判断。",
+        "blocks": [
+          { "type": "para", "text": "具体发现，数字带来源。" },
+          { "type": "kv", "items": [["标签", "值"], ["标签2", "值2"]] },
+          { "type": "bullets", "items": ["仅当内容确实是列表形态时使用"] }
+        ]
+      }
+    },
+    {
+      "id": "rolling-program",
+      "name": "示例：滚动招领型项目",
+      "status": "ongoing",
+      "deadline": null,
+      "verified": "YYYY-MM-DD",
+      "source": "https://official.example.com/rolling",
+      "fields": {
+        "name": "示例：滚动招领型项目",
+        "deadline_text": "长期有效，按季度评选",
+        "organizer": "示例主办方",
+        "eligibility": "不限身份",
+        "how_to_enter": "产品内入口",
+        "why": "无固定截止，随时可参与下一轮"
+      },
+      "doc": {
+        "intro": "滚动招领型项目，与一次性赛事不同。",
+        "blocks": [{ "type": "para", "text": "说明分批机制与参与方式。" }]
+      }
+    },
+    {
+      "id": "unverified-item",
+      "name": "示例：状态未能核实",
+      "status": "unknown",
+      "deadline": null,
+      "unknown_reason": "官网未标注报名状态，官方公告页已下线，仅有第三方转述",
+      "verified": "YYYY-MM-DD",
+      "source": "https://news.example.com/mention",
+      "fields": {
+        "name": "示例：状态未能核实",
+        "deadline_text": "未查到",
+        "organizer": "示例主办方",
+        "eligibility": "未查到",
+        "how_to_enter": "需联系主办方",
+        "why": "状态不明，建议直接联系确认后再决定是否投入"
+      },
+      "doc": {
+        "intro": "状态无法核实，此处不做推测。",
+        "blocks": [{ "type": "para", "text": "说明为何无法核实，以及建议的下一步。" }]
+      }
+    }
+  ],
+  "document_meta": [
+    { "label": "调研范围", "value": "N 个页面，精读 N 个" },
+    { "label": "筛选口径", "value": "说明本次筛选依据" },
+    { "label": "状态核验日期", "value": "YYYY-MM-DD" }
+  ],
+  "sources": [
+    { "label": "官方来源名称", "url": "https://official.example.com", "accessed": "YYYY-MM-DD" }
+  ],
+  "extra_sheets": [
+    {
+      "name": "未获取",
+      "columns": [
+        { "title": "缺失内容", "width": 32 },
+        { "title": "原因", "width": 38 },
+        { "title": "建议下一步", "width": 40, "wrap": true }
+      ],
+      "rows": [
+        ["示例缺失项", "为何查不到", "建议如何补齐"]
+      ],
+      "notes": "本表标注本轮调研的边界，避免读者误以为已完成全部覆盖。"
+    }
+  ]
+}

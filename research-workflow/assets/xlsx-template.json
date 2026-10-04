@@ -1,0 +1,46 @@
+{
+  "_comment": "Excel 模板。复制此文件后填入真实数据, 再运行 build_xlsx.py。删除所有以下划线开头的辅助键。此文件仅作结构参考, 内容为占位示例。",
+  "sheets": [
+    {
+      "name": "核心对比",
+      "columns": [
+        { "title": "产品/厂商", "width": 20 },
+        { "title": "字段A", "width": 16 },
+        { "title": "字段B", "width": 16, "wrap": true },
+        { "title": "字段C", "width": 16 },
+        { "title": "备注", "width": 30, "wrap": true }
+      ],
+      "rows": [
+        ["示例A", 0, "示例内容", "示例内容", "示例备注"],
+        ["示例B", 0, "示例内容", "未查到", "说明为何未查到"]
+      ],
+      "urls": ["https://example.com", "https://example.org"],
+      "notes": "数据采集时间 YYYY-MM-DD; 定价口径为标准版公开价。缺失值统一写 未查到 / 未公开 / 需联系厂商, 不要留空。"
+    },
+    {
+      "name": "来源清单",
+      "columns": [
+        { "title": "产品/厂商", "width": 18 },
+        { "title": "支撑字段", "width": 20 },
+        { "title": "URL", "width": 56 },
+        { "title": "来源层级", "width": 12 },
+        { "title": "采集时间", "width": 14 }
+      ],
+      "rows": [
+        ["示例A", "字段A/字段B", "https://example.com", "T1官方", "YYYY-MM-DD"]
+      ]
+    },
+    {
+      "name": "未获取",
+      "columns": [
+        { "title": "产品/厂商", "width": 18 },
+        { "title": "缺失字段", "width": 20 },
+        { "title": "原因", "width": 40 },
+        { "title": "建议下一步", "width": 30 }
+      ],
+      "rows": [
+        ["示例B", "定价", "官网仅显示联系销售, 无公开价", "联系厂商索取报价单"]
+      ]
+    }
+  ]
+}

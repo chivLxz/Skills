@@ -1,0 +1,51 @@
+{
+  "_comment": "Word 模板。图片路径相对于本文件所在目录, 建议把data.json 与 images/ 放在同一层。删除所有以下划线开头的辅助键。此文件仅作结构参考, 内容为占位示例。",
+  "title": "报告标题",
+  "subtitle": "一句话说明范围与结论",
+  "meta": [
+    { "label": "调研范围", "value": "N 个产品/ N 个页面" },
+    { "label": "候选网页", "value": "N 个, 精读 N 个" },
+    { "label": "采集时间", "value": "YYYY-MM-DD" }
+  ],
+  "sections": [
+    {
+      "heading": "一、对比维度名",
+      "intro": "开篇即结论: 一句话说清该维度上的核心发现, 不要写背景铺垫。",
+      "blocks": [
+        {
+          "type": "image",
+          "src": "images/example.com-01.png",
+          "caption": "截图描述看到什么(位置、布局、关键元素), 不是它意味着什么",
+          "source": "https://example.com"
+        },
+        { "type": "para", "text": "基于截图的具体发现, 1-3 句, 数字带来源。" },
+        {
+          "type": "kv",
+          "items": [
+            ["标签1", "值1"],
+            ["标签2", "值2"]
+          ]
+        },
+        {
+          "type": "table",
+          "columns": ["对象", "维度1", "维度2"],
+          "rows": [
+            ["示例A", "值", "值"],
+            ["示例B", "未查到", "值"]
+          ]
+        },
+        { "type": "bullets", "items": ["仅当内容确实是列表形态时使用"] }
+      ]
+    },
+    {
+      "heading": "二、差距与未获取项",
+      "intro": "明确说明哪些信息没拿到、为什么, 以及建议的下一步。",
+      "blocks": [
+        { "type": "para", "text": "某产品定价需联系厂商, 官网仅显示联系销售。" }
+      ]
+    }
+  ],
+  "sources": [
+    { "label": "示例来源", "url": "https://example.com", "accessed": "YYYY-MM-DD" }
+  ]
+}

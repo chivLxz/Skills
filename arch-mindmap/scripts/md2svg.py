@@ -28,13 +28,18 @@ FONT_FAMILY = ('"PingFang SC","Hiragino Sans GB","Microsoft YaHei",'
                '"Noto Sans CJK SC","Source Han Sans SC",system-ui,'
                '-apple-system,"Segoe UI",sans-serif')
 
-FS = {0: 21.0, 1: 17.0, 2: 15.0}      # 各层级字号
-LH = {0: 38.0, 1: 30.0, 2: 25.0}      # 各层级行高（节点高度）
+FS = {0: 21.0, 1: 17.0, 2: 15.0, 3: 13.5, 4: 12.5, 5: 12.0, 6: 11.5}   # 各层级字号
+LH = {0: 38.0, 1: 30.0, 2: 25.0, 3: 22.0, 4: 20.0, 5: 18.5, 6: 17.5}   # 各层级行高
+MAX_FS_LEVEL = 6                       # 超过该层级沿用最后一档字号
+# 颜色与字重逐层递减，让深层级自然「退后」，不跟主干抢视线
+TEXT_COLOR = {0: '#ffffff', 1: '#ffffff', 2: '#1f2328', 3: '#3c4148',
+              4: '#4e545c', 5: '#61676f', 6: '#737980'}
+TEXT_WEIGHT = {0: '600', 1: '600', 2: '600', 3: '500', 4: '500',
+               5: '400', 6: '400'}
 PILL_PAD = 14.0                        # 药丸型节点的水平内边距
-GAP_X = 46.0                           # 层级之间横向间距
+GAP_X = 46.0                           # 层级之间横向间距（基准值）
 GAP_Y = 9.0                            # 兄弟节点之间纵向间距
 MARGIN = 44.0                          # 画布留白
-MAX_FS_LEVEL = 2                       # 超过该层级沿用最后一档字号
 WING_TRIGGER = 2.2                     # 高宽比超过这个值就切两翼布局
 
 
@@ -44,6 +49,16 @@ def fs_of(depth):
 
 def lh_of(depth):
     return LH.get(depth, LH[MAX_FS_LEVEL])
+
+
+def gapx_of(depth):
+    """层级越深横向间距越窄 —— 深层节点排密一点，整张图才不松散。"""
+    return max(22.0, GAP_X - depth * 5.0)
+
+
+def underline_light(depth):
+    """下划线颜色随层级加深而变淡。"""
+    return min(58.0 + (depth - 2) * 7.0, 86.0)
 
 
 def text_width(s, fs):
@@ -94,12 +109,13 @@ def place(node, x, top, direction):
     if not node['children']:
         node['y'] = top + (node['sub_h'] - node['lh']) / 2.0
         return
+    gap = gapx_of(node['depth'])
     cy = top
     for c in node['children']:
         if direction > 0:
-            place(c, node['x'] + node['w'] + GAP_X, cy, 1)
+            place(c, node['x'] + node['w'] + gap, cy, 1)
         else:
-            place(c, node['x'] - GAP_X, cy, -1)
+            place(c, node['x'] - gap, cy, -1)
         cy += c['sub_h'] + GAP_Y
     first, last = node['children'][0], node['children'][-1]
     mid = (first['y'] + first['lh'] / 2.0 + last['y'] + last['lh'] / 2.0) / 2.0
@@ -236,7 +252,7 @@ def render(root, font_scale=1.0, layout='auto'):
                 dx = max((x1 - x2) * 0.5, 8.0)
                 d = ('M %.1f %.1f C %.1f %.1f, %.1f %.1f, %.1f %.1f'
                      % (x1, cy_n, x1 - dx, cy_n, x2 + dx, cy_c, x2, cy_c))
-            sw = 2.6 if n['depth'] == 0 else 2.0
+            sw = 2.6 if n['depth'] == 0 else max(1.2, 2.0 - n['depth'] * 0.15)
             out.append('<path d="%s" fill="none" stroke="%s" stroke-width="%.1f" '
                        'stroke-linecap="round"/>' % (d, color_of(c, 58, 62), sw))
             edges(c)
@@ -255,8 +271,8 @@ def render(root, font_scale=1.0, layout='auto'):
                        'fill="#ffffff" dominant-baseline="central">%s</text>'
                        % (n['x'] + PILL_PAD, n['y'] + lh / 2.0, fs, esc(n['title'])))
         else:
-            tc = '#1f2328' if d == 2 else '#3c4148'
-            fw = '600' if d == 2 else '400'
+            tc = TEXT_COLOR.get(d, TEXT_COLOR[MAX_FS_LEVEL])
+            fw = TEXT_WEIGHT.get(d, TEXT_WEIGHT[MAX_FS_LEVEL])
             out.append('<text x="%.1f" y="%.1f" font-size="%.1f" font-weight="%s" '
                        'fill="%s" dominant-baseline="central">%s</text>'
                        % (n['x'], n['y'] + lh / 2.0, fs, fw, tc, esc(n['title'])))
@@ -268,9 +284,9 @@ def render(root, font_scale=1.0, layout='auto'):
                            % (n['x'], uy, n['x'] + uw, uy))
             else:
                 out.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" '
-                           'stroke="%s" stroke-width="1.6" stroke-linecap="round"/>'
+                           'stroke="%s" stroke-width="1.5" stroke-linecap="round"/>'
                            % (n['x'], uy, n['x'] + uw, uy,
-                              color_of(n, 52, 60) if d <= 3 else '#d8dde3'))
+                              color_of(n, 52, underline_light(d))))
     out.append('</svg>')
     return '\n'.join(out), total_w, total_h, used
 

@@ -16,8 +16,12 @@ md2xmind.py — 把 Markdown 大纲转成 .xmind（Xmind Zen 格式）。
         [--structure unbalanced|logic-right|logic-left|tree-right|org-chart|timeline]
 
 Markdown 约定:
-    #      -> 中心主题（取第一个一级标题）
-    ## 及以下 -> 各级分支（层级 = 标题级数 - 1）
+    #           -> 中心主题（取第一个一级标题）
+    ## ~ ###### -> 各级分支（层级 = 标题级数 - 1）
+    - / 1.      -> 嵌套列表，继续往下；每缩进一层算一级
+
+    标题只有 6 级，够不到 5 层以上。所以深层的细节用嵌套列表表达，
+    两种写法可以在同一份大纲里混用。
 """
 import sys
 import os
@@ -26,8 +30,10 @@ import json
 import uuid
 import zipfile
 
-MAX_DEPTH = 6
+MAX_DEPTH = 12
 HEADER_RE = re.compile(r'^(#{1,6})\s+(.*?)\s*$')
+# 嵌套列表：Markdown 标题只有 6 级，靠列表继续往下探
+LIST_RE = re.compile(r'^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+(.*?)\s*$')
 CODE_RE = re.compile(r'`([^`]+)`')
 
 STRUCTURES = {
@@ -58,32 +64,95 @@ def clean(text):
     return text, notes, flagged
 
 
+def normalize_depths(items):
+    """把可能跳级的原始层级压成连续层级。
+
+    用户写大纲时经常从 ### 直接跳到 #####，或者列表缩进不规整。
+    这里按「路径栈」重算：只认相对深浅，不认绝对数字，
+    保证输出的层级一定是从 1 开始连续的，不会出现断层。
+    """
+    path = []
+    out = []
+    for depth, title, notes, flagged in items:
+        while path and path[-1] >= depth:
+            path.pop()
+        level = len(path) + 1
+        path.append(depth)
+        out.append((min(level, MAX_DEPTH), title, notes, flagged))
+    return out
+
+
 def parse(md_path):
-    """返回 (中心主题, [(层级, 标题, 备注, 待复核), ...])，层级从 1 开始。"""
+    """返回 (中心主题, 中心备注, 中心待复核, [(层级, 标题, 备注, 待复核), ...])。
+
+    层级从 1 开始。支持的语法:
+
+        # 中心主题
+        ## ~ ######      前 5 层（标题层级 - 1）
+        - 列表 / 1. 列表  继续往下，每缩进一层加一级
+
+    标题和列表可以混用。列表专门用来突破「Markdown 只有 6 级标题」
+    这个上限——深层级的细节交给列表来表达。
+    """
     center = None
+    center_notes, center_flag = [], False
     items = []
+    base_depth = 0        # 当前标题所处层级
+    list_indents = []     # 当前列表块的缩进栈
+
     with open(md_path, 'r', encoding='utf-8') as f:
+        lines = f.read().splitlines()
+        # 跳过开头可能存在的 YAML frontmatter，避免把里面的列表误当成节点
+        if lines and lines[0].strip() == '---':
+            for j in range(1, len(lines)):
+                if lines[j].strip() == '---':
+                    lines = lines[j + 1:]
+                    break
+
         in_fence = False
-        for line in f:
-            if line.strip().startswith('```'):
+        for raw in lines:
+            if raw.strip().startswith('```'):
                 in_fence = not in_fence
                 continue
             if in_fence:
                 continue
-            m = HEADER_RE.match(line.rstrip('\n'))
-            if not m:
+
+            m = HEADER_RE.match(raw)
+            if m:
+                title, notes, flagged = clean(m.group(2))
+                if not title:
+                    continue
+                level = len(m.group(1))
+                if center is None:
+                    center, center_notes, center_flag = title, notes, flagged
+                    base_depth = 0
+                else:
+                    base_depth = level - 1
+                    items.append((base_depth, title, notes, flagged))
+                list_indents = []          # 换标题 -> 列表重新起算
                 continue
-            level = len(m.group(1))
-            title, notes, flagged = clean(m.group(2))
-            if not title:
+
+            m = LIST_RE.match(raw)
+            if m:
+                title, notes, flagged = clean(m.group(2))
+                if not title:
+                    continue
+                width = len(m.group(1).replace('\t', '    '))
+                if not list_indents or width > list_indents[-1]:
+                    list_indents.append(width)
+                elif width < list_indents[-1]:
+                    while len(list_indents) > 1 and list_indents[-1] > width:
+                        list_indents.pop()
+                    if width < list_indents[0]:
+                        list_indents[0] = width
+                items.append((base_depth + len(list_indents),
+                              title, notes, flagged))
                 continue
-            if center is None:
-                center, center_notes, center_flag = title, notes, flagged
-                continue
-            items.append((max(1, min(level - 1, MAX_DEPTH)), title, notes, flagged))
+
     if center is None:
-        center, center_notes, center_flag = os.path.splitext(os.path.basename(md_path))[0], [], False
-    return center, center_notes, center_flag, items
+        center = os.path.splitext(os.path.basename(md_path))[0]
+
+    return center, center_notes, center_flag, normalize_depths(items)
 
 
 def build_tree(center, center_notes, center_flag, items):

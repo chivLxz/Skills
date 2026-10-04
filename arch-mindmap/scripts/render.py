@@ -70,13 +70,17 @@ def find_browser():
 
 
 def auto_scale(w, h):
-    """按画布尺寸选超采样倍率，让 PNG 最大边落在 4000px 上下。"""
+    """按画布尺寸选超采样倍率。
+
+    目标是让最小的字在成品图里也有足够物理像素 —— 深层级字号只有 11~12px，
+    1x 采样下贴进文档会糊。同时不把 PNG 撑到离谱的大小。
+    """
     m = max(w, h)
-    if m >= 3000:
+    if m >= 5000:
         return 1
-    if m >= 1600:
+    if m >= 2500:
         return 2
-    if m >= 800:
+    if m >= 1000:
         return 3
     return 4
 

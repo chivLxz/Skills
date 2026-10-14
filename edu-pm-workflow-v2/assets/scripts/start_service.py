@@ -6,8 +6,12 @@
   --doctor     打印环境体检结果，排查问题时先跑这个
   --check      只检查依赖是否就绪，不启动
   --install    显式重装共享运行环境（平时不需要，--serve 会自动准备）
+  --add-user   创建/重置 PRD 编辑账号（不启动服务）
+  --list-users 列出已配置的编辑账号
+  --remove-user 删除账号
 """
 import argparse
+import getpass
 import os
 import sys
 import traceback
@@ -15,13 +19,25 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pm_bootstrap import doctor, ensure_runtime, ensure_serving  # noqa: E402
-from pm_runtime import ensure_config  # noqa: E402
+from pm_runtime import (add_user, ensure_config, load_users,  # noqa: E402
+                        remove_user, users_path)
 
 ROOT = Path(os.environ.get("PROTOTYPE_PROJECT_DIR")
             or Path(__file__).resolve().parent.parent).resolve()
 HINT = "排查办法：在项目目录执行  python3 scripts/start_service.py --doctor" \
     if os.name != "nt" else \
     "排查办法：在项目目录执行  py -3 scripts\\start_service.py --doctor"
+
+
+def _ask_password(prompt="口令（输入时不回显）: "):
+    """交互输入优先；stdin 不是终端时（脚本/CI）退化成一次明文读取，避免卡住。"""
+    if sys.stdin.isatty():
+        first = getpass.getpass(prompt)
+        again = getpass.getpass("再输一次确认: ")
+        if first != again:
+            raise SystemExit("两次输入不一致，已取消")
+        return first
+    return sys.stdin.readline().strip()
 
 
 def main():
@@ -36,10 +52,40 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--no-download", action="store_true",
                         help="不允许下载 Chromium（没有可复用的系统浏览器时直接报错）")
+    parser.add_argument("--add-user", metavar="用户名", help="创建/重置编辑账号后退出")
+    parser.add_argument("--name", help="配合 --add-user：显示名（默认与用户名相同）")
+    parser.add_argument("--password", help="配合 --add-user：口令（省略则交互输入）")
+    parser.add_argument("--role", default="editor", choices=["editor", "viewer"])
+    parser.add_argument("--list-users", action="store_true", help="列出已配置账号")
+    parser.add_argument("--remove-user", metavar="用户名", help="删除账号后退出")
     args = parser.parse_args()
 
     if sys.version_info < (3, 9):
         raise SystemExit(f"需要 Python 3.9 或更高版本，当前是 {sys.version.split()[0]}")
+
+    if args.list_users:
+        users = load_users(ROOT).get("users", [])
+        if not users:
+            print("尚未创建编辑账号（PRD 默认只读）。")
+            print("创建：python3 scripts/start_service.py --add-user 张三")
+        else:
+            print(f"账号表：{users_path(ROOT)}")
+            for user in users:
+                print(f"  · {user.get('name')}（{user.get('username')}，{user.get('role')}）")
+        return 0
+
+    if args.remove_user:
+        removed = remove_user(ROOT, args.remove_user)
+        print("✅ 已删除" if removed else "⚠️  未找到该账号")
+        return 0
+
+    if args.add_user:
+        password = args.password or _ask_password()
+        record = add_user(ROOT, args.add_user, args.name or args.add_user, password, args.role)
+        print(f"✅ 已创建编辑账号：{record['name']}（{record['username']}，{record['role']}）")
+        print(f"   账号表：{users_path(ROOT)}")
+        print("   重新打开 PRD 页面后，点右上角「编辑」即可登录。")
+        return 0
 
     if args.doctor:
         return doctor(ROOT)

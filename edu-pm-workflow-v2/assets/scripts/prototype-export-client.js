@@ -31,6 +31,21 @@
   let exporting = false;
   const revisions = new Map();
 
+  // ── 编辑会话（PRD「登录后才可编辑」）────────────────────────────────
+  // 不用 cookie：PRD 常常是 file:// 打开的，向 127.0.0.1 写 cookie 会撞第三方
+  // cookie 策略。会话串由服务端签名下发，这里存 localStorage、按请求头带回。
+  const SESSION_KEY = () => 'pm-session:' + (cfg.projectId || 'default');
+  let session = null;
+  try { session = localStorage.getItem(SESSION_KEY()); } catch (e) { session = null; }
+
+  function setSession(value) {
+    session = value || null;
+    try {
+      if (session) localStorage.setItem(SESSION_KEY(), session);
+      else localStorage.removeItem(SESSION_KEY());
+    } catch (e) { /* 隐私模式禁写 localStorage：仅本次会话内有效，可接受 */ }
+  }
+
   const path = () => decodeURIComponent(location.pathname || '');
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -75,18 +90,21 @@
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 120000);
     try {
+      const headers = {
+        'Content-Type': 'application/json',
+        'X-PM-Project': cfg.projectId,
+        'X-PM-Token': cfg.token
+      };
+      if (session) headers['X-PM-Session'] = session;
       const response = await fetch(url, {
         method: payload === undefined ? 'GET' : 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-PM-Project': cfg.projectId,
-          'X-PM-Token': cfg.token
-        },
+        headers,
         body: payload === undefined ? undefined : JSON.stringify(payload),
         cache: 'no-store',
         signal: controller.signal
       });
       const data = await response.json().catch(() => ({}));
+      if (data && data.error === '请先登录后再保存') setSession(null);   // 会话过期，清掉免得反复重试
       if (!response.ok || data.error) throw new Error(data.error || ('HTTP ' + response.status));
       return data;
     } finally {
@@ -170,14 +188,66 @@
     return data.revision;
   }
 
-  async function save(content, file) {
+  async function save(content, file, opts) {
     const target = file || path();
     if (!revisions.has(target)) throw new Error('尚未读取文件版本，请重新加载页面后再保存');
     const data = await api('/api/save-html', {
-      path: target, content, revision: revisions.get(target)
+      path: target, content, revision: revisions.get(target),
+      summary: (opts || {}).summary || '', where: (opts || {}).where || ''
     });
     revisions.set(target, data.revision);
     return data;
+  }
+
+  // ── 编辑会话：登录 / 登录态 / 登出 / 改动记录 ─────────────────────
+  // 服务连不上时不抛错，回一个「游客只读」——顶栏据此把所有编辑入口置灰，
+  // 而不是弹一堆报错。这正是 §2.10 要求的离线降级：游客只能看。
+  const GUEST = { ok: true, auth: false, user: null, editing_enabled: false, offline: true };
+
+  async function me() {
+    try {
+      await loadRuntimeConfig();
+      if (!configured()) return Object.assign({}, GUEST, { read_only: true });
+      const state = await request(server + '/api/me');
+      // 本地存的会话服务端不认了（过期/账号被删）→ 就地清掉
+      if (session && !state.auth) setSession(null);
+      return state;
+    } catch (e) {
+      return Object.assign({}, GUEST, { reason: e && e.message });
+    }
+  }
+
+  async function login(username, password) {
+    await ensureReady();
+    const data = await request(server + '/api/login', { username, password });
+    setSession(data.session);
+    return data;
+  }
+
+  async function logout() {
+    setSession(null);
+    try { await request(server + '/api/logout', {}); } catch (e) { /* 无状态会话，失败也无所谓 */ }
+    return { ok: true };
+  }
+
+  async function changeLog(file) {
+    try {
+      const target = file || path();
+      const data = await api('/api/change-log?path=' + encodeURIComponent(target));
+      return data.entries || [];
+    } catch (e) {
+      return [];   // 服务不可达时由页面回落到 HTML 内嵌的 pm-change-log 块
+    }
+  }
+
+  async function revise(entries, opts) {
+    // 只追加「改了哪几处」的说明，不写整份 HTML——记录是给人看的，不是备份。
+    const target = (opts || {}).path || path();
+    const list = (Array.isArray(entries) ? entries : [entries]).map((e) => ({
+      where: e.where || '', summary: e.summary || '', kind: e.kind || 'edit'
+    })).filter((e) => e.where || e.summary);
+    if (!list.length) return { ok: true, added: [] };
+    return api('/api/change-log', { path: target, entries: list });
   }
 
   // ── 单页取图：给 PRD「一键复制全文」把原型 iframe 换成 base64 图片 ──
@@ -290,7 +360,10 @@
     exportAll(findExportButton());
   }, true);
 
-  window.PMService = { revision, save, api, health };
+  window.PMService = {
+    revision, save, api, health, me, login, logout, changeLog, revise,
+    getSession: () => session, setSession
+  };
   window.exportPrototypeViaServer = exportAll;
   window.snapshotPrototypeViaServer = snapshot;
   window.inlineAssetViaServer = asset;

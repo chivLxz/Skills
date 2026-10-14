@@ -6,16 +6,22 @@
   * 端口可自愈：bind 失败时换 salt 重新推导并回写配置，不会永久占坑。
   * ensure_config() 是 create-or-load，缺配置时创建而不是抛错——任何人 clone 一个
     项目仓（.pm-workflow/ 被 gitignore）都不该看到 traceback。
+  * 本模块同时承载「PRD 编辑登录」的账号与会话逻辑（v3.4 起）：账号落在
+    `.pm-workflow/users.json`（同样被 gitignore），会话是无状态签名串，签名密钥
+    复用项目 token，所以不引入任何新的持久化文件或依赖。
 """
+import base64
 import hashlib
+import hmac
 import json
 import os
 import secrets
 import tempfile
+import time
 from pathlib import Path
 from urllib.request import ProxyHandler, build_opener
 
-VERSION = "3.3.0"
+VERSION = "3.4.0"
 PORTS_SCHEME = "deterministic-v2"
 PORT_FLOOR = 20000
 PORT_SPAN = 12767  # 20000..32766，+1 后仍不超过 32767
@@ -186,3 +192,148 @@ def cors_response_origin(origin):
 def valid_token(headers, config):
     return (headers.get("X-PM-Project") == config["project_id"] and
             secrets.compare_digest(headers.get("X-PM-Token", ""), config["token"]))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 编辑账号与会话（PRD 的「登录后才可编辑」）
+#
+# 为什么是本地账号而不是公司 SSO：PRD 常常在内网 `file://` / 裸 http 下打开，
+# 那里没有可信的身份源；而这份文档本来就躺在 PM 自己机器的项目目录里，导出服务
+# 也只听 127.0.0.1（除非显式只读模式）。所以「谁改的」这件事，以本机项目为界最实在。
+#
+# 会话不做 cookie：PRD 可能是 `file://` 打开的，向 127.0.0.1:PORT 写 cookie 会命中
+# 第三方 cookie 策略。改用与 X-PM-Token 同一套显式 header（X-PM-Session），
+# 由页面自己存在 localStorage 里——语义清楚，也不依赖浏览器对本地文件的 cookie 宽容度。
+#
+# 账号存储用的是 pbkdf2-sha256 + 每用户独立 salt；users.json 本身在 .pm-workflow/
+# （安装器已写进项目 .gitignore），不会跟着产物提交出去。
+# ─────────────────────────────────────────────────────────────────────────────
+
+SESSION_TTL = 12 * 3600            # 一次登录管一个工作日
+SESSION_HEADER = "X-PM-Session"
+_PBKDF2_ROUNDS = 120_000
+USERS_FILE = "users.json"
+
+
+def users_path(root):
+    return Path(root).resolve() / ".pm-workflow" / USERS_FILE
+
+
+def load_users(root):
+    """读账号表；文件缺失/损坏一律回落成「未启用编辑」，不抛错。"""
+    path = users_path(root)
+    data = {}
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+    if not isinstance(data, dict):
+        data = {}
+    users = data.get("users")
+    data["users"] = [u for u in users if isinstance(u, dict) and u.get("username")] if isinstance(users, list) else []
+    return data
+
+
+def save_users(root, data):
+    path = users_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(path, json.dumps(data, ensure_ascii=False, indent=2))
+    try:
+        path.chmod(0o600)          # 里面有口令散列；Windows 上该位无意义，失败不阻断
+    except OSError:
+        pass
+    return data
+
+
+def hash_password(password, salt=None):
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), _PBKDF2_ROUNDS)
+    return "pbkdf2${}${}".format(salt, digest.hex())
+
+
+def verify_password(password, stored):
+    try:
+        scheme, salt, _ = str(stored).split("$", 2)
+    except ValueError:
+        return False
+    if scheme != "pbkdf2":
+        return False
+    return secrets.compare_digest(hash_password(password, salt), stored)
+
+
+def find_user(root, username):
+    for user in load_users(root).get("users", []):
+        if user.get("username") == username:
+            return user
+    return None
+
+
+def add_user(root, username, display_name, password, role="editor"):
+    """新增或覆盖一个账号。返回不含散列的用户信息（可直接回给前端）。"""
+    username = (username or "").strip()
+    if not username:
+        raise ValueError("用户名不能为空")
+    if not password or len(password) < 4:
+        raise ValueError("口令至少 4 位")
+    data = load_users(root)
+    record = {
+        "username": username,
+        "name": (display_name or username).strip(),
+        "role": role if role in ("editor", "viewer") else "editor",
+        "password": hash_password(password),
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    data["users"] = [u for u in data["users"] if u.get("username") != username] + [record]
+    save_users(root, data)
+    return {k: record[k] for k in ("username", "name", "role")}
+
+
+def remove_user(root, username):
+    data = load_users(root)
+    before = len(data["users"])
+    data["users"] = [u for u in data["users"] if u.get("username") != username]
+    save_users(root, data)
+    return len(data["users"]) < before
+
+
+def public_user(record):
+    return {"username": record.get("username"), "name": record.get("name") or record.get("username"),
+            "role": record.get("role") or "editor"}
+
+
+def make_session(config, username, ttl=SESSION_TTL):
+    """无状态会话串：base64url(username).expiry.hmac。密钥就是项目 token。"""
+    expiry = int(time.time()) + int(ttl)
+    payload = "{}.{}".format(username, expiry)
+    signature = hmac.new(config["token"].encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return "{}.{}".format(base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("="), signature)
+
+
+def read_session(config, token):
+    """校验并解出会话内容；任何一处不对都返回 None（过期、被改、格式坏）。"""
+    if not token or token.count(".") != 1:
+        return None
+    blob, signature = token.split(".", 1)
+    try:
+        payload = base64.urlsafe_b64decode(blob + "=" * (-len(blob) % 4)).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
+    expected = hmac.new(config["token"].encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not secrets.compare_digest(signature, expected):
+        return None
+    username, _, expiry = payload.rpartition(".")
+    try:
+        if int(expiry) < int(time.time()):
+            return None
+    except ValueError:
+        return None
+    return {"username": username, "expiry": int(expiry)}
+
+
+def authenticate(root, config, headers):
+    """把请求头里的会话换成用户记录；未登录 / 账号已被删 / 过期都返回 None。"""
+    session = read_session(config, headers.get(SESSION_HEADER, ""))
+    if not session:
+        return None
+    return find_user(root, session["username"])

@@ -342,10 +342,11 @@ PRD 全篇写"待确认"的地方（埋点字典未给、文案待定、规则�
 - 先图（原型）后文
 - 逐条编号描述交互规则；详细方案「描述」列一律按 §2.3.1 的【】分块结构组织
 - **极度重要（全文档可编辑）：** PRD **整篇正文**都要能在浏览器里直接改——不再只让「描述」列可编辑。具体的可编辑范围、排除项、表格增删行与行列拖拽，全部由 **§2.7 通用编辑模块** 统一实现并固化为必做项；§2.4 这里只描述配套的保存动作。
-- **极度重要：** 必须在 HTML 底部插入“悬浮动作面板”，代码大纲如下（AI需补全标准JS）：
+- **极度重要：** 动作入口**全部收口在右上角顶栏**（v2.5 起，见 **§2.10**）——`双栏预览 / 编辑 / 撤销 / 保存 / 交互原型 / 静态图册` 六个固定导航。**不再有右下角 `.save-btn-container`、不再有右下角 `.fab-group`**（它们的两个动作已并入顶栏）。配套约定：
   1. 编辑变更追踪：所有可编辑块的 `blur` 事件，如内容相对 `data-original` 被修改，则为该块加 `data-changed="true"` 属性和绿色 `edited-cell` 高亮类（追踪逻辑由 §2.7 模块统一提供，无需另写）。
-  2. 页面右下角的悬浮 `.save-btn-container` 区只保留一个按钮：“保存并通知AI”。截图导出功能已移至原型和流程图各自的 HTML 中，PRD 不再承载导出功能。另：**页面左下角**固定一个「📋 一键复制全文」按钮（实现见 §2.8），与右下角保存按钮分居两侧、互不遮挡。
-  3. 点击保存按钮时，抓取 `document.documentElement.outerHTML` 并调用系统的文件保存句柄直接物理存档覆盖当前 PRD HTML 文件。**因为保存抓的是 `outerHTML`，§2.7 把列宽/行高写成 inline px、把编辑写回 DOM，保存即自动持久化，无需额外存储逻辑。**
+  2. 「保存」按钮走 **§2.10 ⑦** 的 `saveAll()`：先 `blur()` 结算正在输入的那一笔 → 抓 `document.documentElement.outerHTML` → 调 `PMService.save()` 由**本地导出服务**物理覆写当前 PRD HTML。**因为保存抓的是 `outerHTML`，§2.7 把列宽/行高写成 inline px、把编辑写回 DOM，保存即自动持久化，无需额外存储逻辑。**
+  3. **保存必须已登录**（§2.10 ③）。游客态「保存」是置灰的——不要做成"点了才报错"。
+  4. **另：** 页面左下角固定一个「📋 一键复制全文」按钮（即用户要求里的"导出"能力，实现见 §2.8），与右上角顶栏分居两侧、互不遮挡。**它是唯一的导出入口，不占顶栏导航位。**
 - 黄色高亮标注关键变更点（用 `.alert` 样式块）
 - **重点靠"适量"标出来，不是靠全段加粗。** 只给关键业务规则、门槛数值、关键状态、数量限制和风险点加粗或高亮；整段加粗等于没有重点。
 - 必须覆盖边界情况——写进对应功能的【边界说明】（§2.3.1），不另起文档级异常章节。
@@ -396,7 +397,7 @@ PRD 全篇写"待确认"的地方（埋点字典未给、文案待定、规则�
 
 > **背景（踩坑记录）：** 这套右侧「交互原型预览」面板过去只存在于少数历史 PRD 成品里，未沉淀成规范，导致从零写 PRD 时容易漏掉（2.4 又只让放保存按钮）。**故在此固化为必做项：每份 PRD 都要内建该面板。** 它与「六、详细方案」表格里的静态原型列（截图/小 iframe）不同，这是一个全局常驻、可切页、可缩放的活预览 dock。
 
-**目标：** PRD 左侧正文 + 右侧一个可关闭的深色面板，面板内嵌**活的原型 iframe**，用顶部下拉切换页面/场景，支持拖拽改宽，整体等比缩放。**双栏默认关闭**——PRD 打开时是干净的正文阅读态，原型面板由用户点右下角「双栏预览」主动打开。理由：多数人打开 PRD 是为了读需求，不是为了看原型；默认展开会挤掉正文宽度、并在每次滚动时重载 iframe，反而干扰阅读。
+**目标：** PRD 左侧正文 + 右侧一个可关闭的深色面板，面板内嵌**活的原型 iframe**，用顶部下拉切换页面/场景，支持拖拽改宽，整体等比缩放。**双栏默认关闭**——PRD 打开时是干净的正文阅读态，原型面板由用户点**右上角顶栏的「双栏预览」**主动打开（v2.5 前这个开关在右下角，已迁走，见 §2.10 ①）。理由：多数人打开 PRD 是为了读需求，不是为了看原型；默认展开会挤掉正文宽度、并在每次滚动时重载 iframe，反而干扰阅读。
 
 **① HTML 结构：**
 - **`<body>` 不带 `dual-pane`（默认关闭）。** 只有用户点开关、或 §2.6 ⑩ 的深链接命中时才加上。**不要因为原型目录里有文件就自动打开**——面板内容与正文宽度是两件事。
@@ -407,7 +408,8 @@ PRD 全篇写"待确认"的地方（埋点字典未给、文案待定、规则�
   - `.preview-zoom`：一行缩放控件 `－ / 百分比 / ＋ / 适配`（详见 ⑨）。
   - `.device-shell > .device-wrapper > iframe#prototypeFrame`。
   - `.prototype-resizer`：面板左缘竖向拖拽手柄。
-- `.fab-group`（`position:fixed; right:28px; bottom:28px`）：含「双栏预览」开关按钮 +「💾 保存并通知AI」按钮。**双栏打开时整组右移**到面板左侧：`body.dual-pane .fab-group { right: calc(var(--panel-w) + 28px); }`。（即 2.4 的保存按钮并入此 fab-group，不再单独悬浮。）
+- `.fab-group`（`position:fixed; right:28px; bottom:28px`）：含「双栏预览」开关按钮 +「💾 保存并通知AI」按钮。**双栏打开时整组右移**到面板左侧：`body.dual-pane .fab-group { right: calc(var(--panel-w) + 28px); }`。
+  - **⚠️ v2.5 起这一组已并入右上角顶栏**（§2.10），页面上**不再有右下角悬浮区**。上面这段结构与 `body.dual-pane .fab-group` 的位移规则保留在此**仅作旧产物兼容说明**：新产出的 PRD 里，双栏开关就是顶栏第一个按钮 `[data-pm-nav="dual-pane"]`（文案在「双栏预览 / 收起预览」之间切），保存就是第四个按钮。**写新 PRD 时不要两处都做**——那会出现两个开关、两个保存按钮，且状态不同步。
   - **开关按钮的两个状态都要有明确文字**，不要只靠颜色区分：关闭态显示「双栏预览」，打开态显示「收起预览」（或加 `aria-pressed`）。用户不知道当前是开还是关时，面板会被当成 bug 而不是功能。
 
 **② CSS 关键：**
@@ -442,9 +444,13 @@ function switchPage(v){
 }
 function toggleDualPane(){
   const on = document.body.classList.toggle('dual-pane');
-  const btn = document.getElementById('dualPaneToggle'); if(btn) btn.textContent = on ? '收起预览' : '双栏预览';
+  // v2.5 起这个开关长在右上角顶栏上（§2.10 的 [data-pm-nav="dual-pane"]，id=navDualPane）。
+  // 文案交给 PMTopbar.render() 统一维护；这里只在没有顶栏的旧产物里兜底。
+  const btn = document.getElementById('navDualPane') || document.getElementById('dualPaneToggle');
+  if(btn && !window.PMTopbar) btn.textContent = on ? '收起预览' : '双栏预览';
   if(on){ const f=document.getElementById('prototypeFrame'); if(f && !f.src) f.src=currentCfg().url;   // 首次打开才加载 iframe，关闭态不加载
           requestAnimationFrame(scalePreview); setTimeout(scalePreview,350); }
+  if(window.PMTopbar) window.PMTopbar.refresh();
 }
 // 拖拽 .prototype-resizer 改 --panel-w（clamp 如 380..min(900, innerWidth-360)）后 scalePreview()
 window.addEventListener('resize', scalePreview);
@@ -601,7 +607,7 @@ document.querySelector('.device-shell')?.addEventListener('wheel', function(e){
 **① 能力与边界**
 - **全文档可编辑：** 自动给正文内容块（`td/th/p/li/h1~h4/.alert/blockquote/dd/dt`）加 `contenteditable` 并接管变更追踪（`blur` 后内容变化 → `data-changed="true"` + `.edited-cell` 高亮）。
 - **reload 安全（极易踩坑）：** 「已接管」「原始内容」用内存态 `WeakMap`/`WeakSet` 守卫，**绝不把 `data-pm-tracked`/`data-original` 写进 DOM**——否则保存（`outerHTML`）后这些脏属性被存档，重新打开时守卫命中、`blur` 监听不再挂载，编辑高亮静默失效。仅 `contenteditable`、`data-changed`、`.edited-cell` 会随存档保留（前者保持可编辑、后两者作为评审标记，符合预期）。
-- **排除项（保持交互骨架不被误编辑）：** 右侧 `.prototype-sidebar` 预览面板、`.fab-group`/`.save-btn(-container)`/`.dual-pane-toggle` 悬浮按钮、各拖拽手柄、`.pm-anchor`、`iframe`/`script`/`style`/`button`；**含 `img`/`iframe`/`table`/`video`/`canvas` 的容器单元格（详细方案「原型」列无论用 iframe 还是截图 `<img>`）整体不接管**，避免原型/截图被改坏。
+- **排除项（保持交互骨架不被误编辑）：** 顶部 `.topbar` 与改动记录面板 `.changelog-panel`（§2.10——**它们是工具外壳，不是正文**，不接管、也不给它们里面的表格包包裹层／加手柄）、右侧 `.prototype-sidebar` 预览面板、`.fab-group`/`.save-btn(-container)`/`.dual-pane-toggle` 等悬浮按钮（v2.5 起这些按钮已并入顶栏，类名保留仅供旧产物兼容）、各拖拽手柄、`.pm-anchor`、`iframe`/`script`/`style`/`button`；**含 `img`/`iframe`/`table`/`video`/`canvas` 的容器单元格（详细方案「原型」列无论用 iframe 还是截图 `<img>`）整体不接管**，避免原型/截图被改坏。
 - **全表增删行：** 作用于**所有数据表**（版本记录/功能清单/详细方案/埋点…）。**表头行自动识别**：整行均为 `<th>`（含写在 `<tbody>` 里的表头行）或位于 `<thead>` 的行都不加增删/行高控件、仅用于列宽手柄定位。每个数据行首格 `hover` 出现 `＋`（下方插一行）/`－`（删除本行，留 1 行兜底）；新行克隆结构、**去掉 `id`/`rowspan`/`colspan`** 防重复 id、清空文本、自动接管编辑。
 - **列宽/行高拖拽：** 表头每列右缘 `.col-resizer`（改 `<col>` 宽，下限 48px）、每数据行首格下缘 `.row-resizer`（改 `tr` 高，下限 24px）。手柄默认 `opacity:0`、`hover` 才显、写 inline px → 随 `outerHTML` 保存，且静态截图无残影。无 `<colgroup>` 的表会按表头单元格当前宽度自动补一个。
 - **撤销/重做：** 上述所有操作都进同一个撤销栈，快捷键连续撤销/重做，详见 **⑤**。
@@ -637,6 +643,7 @@ body.col-resizing { cursor:col-resize !important; } body.row-resizing { cursor:r
 (function () {
   var EDITABLE_BLOCK_SELECTOR = 'td, th, p, li, h1, h2, h3, h4, .alert, blockquote, dd, dt';
   var EXCLUDE_SELECTOR = '.prototype-sidebar, .fab-group, .save-btn, .save-btn-container, .dual-pane-toggle, ' +
+    '.topbar, .changelog-panel, ' +
     '.col-resizer, .row-resizer, .row-ctrl, .pm-anchor, .editable-table-remove, .pm-undo-toast, script, style, iframe, button';
   var SKIP_CELL_CONTENT = 'table, iframe, video, canvas, img';   // 含这些的容器格不整体接管（如原型/截图列）
   var origMap = new WeakMap(), rowDone = new WeakSet();
@@ -896,7 +903,10 @@ body.col-resizing { cursor:col-resize !important; } body.row-resizing { cursor:r
   - **不承诺跨刷新保留撤销历史**——栈只在内存里，刷新 / 重新打开文件即清空。要留档就先保存。
   - 撤销栈**不写进 DOM**（遵守本节「不落 `data-*` 痕迹」的约定），保存与 §2.8 复制的产物保持干净。
   - 提示用的 `.pm-undo-toast` **显示完即从 DOM 移除**，所以 §2.4 保存和 §2.8 复制的逻辑**都不需要改**——不用把它加进任何排除名单。
-- **入口：只做快捷键，不加常驻按钮。** 若后续要加可见入口，放进「更多」菜单，不要再往悬浮区塞按钮（左下角一键复制、右下角双栏预览+保存的布局不动）。程序化调用走 `PMEdit.undo()` / `PMEdit.redo()`，状态查询走 `PMEdit.canUndo()` / `PMEdit.canRedo()`。
+- **入口：快捷键 + 顶栏常驻按钮（v2.5 起两者都要）。** 快捷键是熟练用户的主路径；但**只给快捷键等于没有入口**——用户的原话是把「撤销」列进右上角那几个**固定导航**里的。所以：
+  - 右上角顶栏放一个 `[data-pm-nav="undo"]`（§2.10），`click` 直接调 `PMEdit.undo()`；**非编辑态（游客 / 未进入编辑）置灰**，不要做成"点了报错"。
+  - 按钮不做 `disabled` 之外的额外态；**重做（redo）不单独占按钮位**，仍只走快捷键（顶栏六个导航是定死的，不再加第七个）。程序化调用走 `PMEdit.undo()` / `PMEdit.redo()`，状态查询走 `PMEdit.canUndo()` / `PMEdit.canRedo()`。
+  - 想让按钮在"无栈可撤"时也置灰，可监听 §2.10 里那个 passive `input` 监听把 `PMEdit.canUndo()` 的结果同步给自己——**但这不是必做项**：`undo()` 在空栈时会自己 toast「没有可撤销的操作」，不会静默。
 
 ### 2.8 左下角「一键复制全文」（必做 · 原型 iframe 自动转图片）
 
@@ -924,7 +934,8 @@ PRD 里的图有两种来源，**都得处理**，只处理 iframe 是不够的�
 
 **③ 三步走：剥骨架 → 取图 → 落图（顺序不能反）**
 
-1. **`stripSkeleton()`**：`document.body.cloneNode(true)` 后删掉 `.prototype-sidebar`、`.fab-group`、`.copy-all-fab`、`.copy-toast`、`.col-resizer`、`.row-resizer`、`.row-ctrl`、`.pm-anchor`、`.editable-table-remove`、`script`/`noscript`；`.editable-table-wrap` 用其内部 `<table>` 替换自身。**iframe/img 此时先留着。**
+1. **`stripSkeleton()`**：`document.body.cloneNode(true)` 后删掉 `.prototype-sidebar`、`.fab-group`、`.copy-all-fab`、`.copy-toast`、**`.topbar`、`.changelog-panel`、`#pm-change-log`**（v2.5 新增的三个：前两个是顶栏与改动记录面板，第三个是随文件走的记录数据块）、`.col-resizer`、`.row-resizer`、`.row-ctrl`、`.pm-anchor`、`.editable-table-remove`、`script`/`noscript`；`.editable-table-wrap` 用其内部 `<table>` 替换自身。**iframe/img 此时先留着。**
+   > **⚠️ v2.5 的踩坑：** 顶栏与改动记录是 v2.5 才出现的，而 `stripSkeleton()` 的白名单是按 v2.4 的元素写的——**新增任何"工具外壳"元素时，必须同步加进这个删除清单**，否则复制出去的第一屏就是一条「双栏预览 / 编辑 / 撤销 / 保存…」的按钮栏，粘到钉钉里像一串乱码。判据很简单：**这个元素是"给人读的正文"还是"给人用的工具"？** 后者一律加进来。
 2. **`collectMedia(clone)`**：**只扫 clone 里活下来的节点**去取图。
    > **踩坑（必须照做）：** 早期版本按 `document` 扫 iframe，把 §2.6 右侧双栏预览的 `#prototypeFrame` 也算了进去——它随 `.prototype-sidebar` 一起被删了，结果**白渲一张图、toast 还多报一张**（说"3 张"实际只贴出 2 张）。按 clone 扫天然规避。
    > **踩坑 2（同样必须照做）：** 页面 CSS 全在 `<head>` 里，`document.body.cloneNode(true)` **带不走**，`.proto-shot` 那类尺寸约束会整个丢失，1200px 的截图直接把表格撑爆、描述列被挤成"一行一个字"。所以 `stripSkeleton()` 要**趁 clone 与实时 DOM 还一一对应**（删节点之前，两边 `querySelectorAll('img')` 索引一致），把每张图的实际显示宽度 `getBoundingClientRect().width` 固化成内联 `width` + `max-width:100%`。
@@ -987,7 +998,7 @@ PRD 里的图有两种来源，**都得处理**，只处理 iframe 是不够的�
       if(w > 0){ copies[i].style.width = w + 'px'; copies[i].style.height = 'auto'; }
       copies[i].style.maxWidth = '100%';
     }
-    clone.querySelectorAll('.prototype-sidebar, .fab-group, .copy-all-fab, .copy-toast, .col-resizer, .row-resizer, .row-ctrl, .pm-anchor, .editable-table-remove, script, noscript').forEach(function(n){ n.remove(); });
+    clone.querySelectorAll('.prototype-sidebar, .fab-group, .copy-all-fab, .copy-toast, .topbar, .changelog-panel, #pm-change-log, .col-resizer, .row-resizer, .row-ctrl, .pm-anchor, .editable-table-remove, script, noscript').forEach(function(n){ n.remove(); });
     clone.querySelectorAll('.editable-table-wrap').forEach(function(w){ var t=w.querySelector('table'); if(t) w.replaceWith(t); else w.remove(); });
     return clone;
   }
@@ -1139,15 +1150,462 @@ PRD 里的图有两种来源，**都得处理**，只处理 iframe 是不够的�
 
 PRD HTML 会被推到公司内网供多人浏览。内网是 `http://` 非 localhost，属**不安全上下文**——`navigator.clipboard`、`ClipboardItem`、`showSaveFilePicker` 一律不存在。不要按"我本机点着好使"就当功能可用。
 
-| 能力 | 作者本机（`file://`） | 内网访客（`http://` 非 localhost） |
+| 能力 | 作者本机（`file://` 或 `http://127.0.0.1:端口`，服务在跑） | 内网访客（`http://` 非 localhost） |
 |---|---|---|
-| `💾 保存并通知AI` | ✅ 覆写本地文件 | ⚠️ 无 File System Access → 降级为**下载一份副本** |
-| `📋 一键复制全文` | ✅ | ✅ 但 `navigator.clipboard` 在不安全上下文不存在，**必须有 `execCommand` 兜底**否则整个复制哑火 |
-| 原型取图（`/api/snapshot`、`/api/asset`） | ✅ | ✅ 但服务端要按项目目录相对解析发起页，见下面这条踩坑 |
+| 顶栏「编辑 / 保存」（§2.10） | ✅ 登录后可用，服务端物理覆写文件 | 🚫 **置灰**——导出服务只在作者本机 `127.0.0.1`，访客机器上连不上 → `/api/me` 返回游客态 → 整站只读（**这正是"游客仅可查看"的落地方式**） |
+| 「📋 一键复制全文」（§2.8） | ✅ | ✅ 但 `navigator.clipboard` 在不安全上下文不存在，**必须有 `execCommand` 兜底**否则整个复制哑火 |
+| 原型取图（`/api/snapshot`、`/api/asset`） | ✅ | ⚠️ 同源限制同上——访客机器上没有导出服务，**取图会失败并如实降级为"纯文本复制（原型图缺失）"**，不许静默丢图 |
+| 双栏预览 / 交互原型 / 静态图册（§2.6 / §2.10 ①） | ✅ | ✅（都是纯前端 iframe / 跳转，不依赖服务） |
+
+> **⚠️ v2.5 的口径变化（比 v2.4 更干净）：** v2.4 之前，内网访客点保存会走到 `showSaveFilePicker` 降级为"下载一份副本"——**那是假编辑**：他改的是一份下载到本地的副本，公司内网上的那份纹丝不动，而他自己以为改上去了。v2.5 起**访客就是游客**，保存按钮直接置灰，不会产生这种错觉。作者要在内网上改 PRD，就走正常流程：拉回本地 → 起服务 → 登录 → 改 → 保存 → 重新发布。
 
 > **踩坑（v2.7 修正）：** 内网用 http 打开时 `location.pathname` 是**站点根路径**、磁盘上并不存在，导出服务旧版只按绝对路径解析发起页，导致 `/api/snapshot` 与 `/api/asset` 全返 400、「一键复制全文」**一张图都取不到**（toast 还只说"生成失败"）。服务端 `_resolve_base_html()` 必须**再按项目目录相对解一次**。
 
 > 任何一档降级都要在 toast 里讲清楚丢了什么（§2.8 降级三档），不许静默失败。
+
+---
+
+### 2.10 PRD 顶栏快捷导航 · 登录门禁 · 改动记录（v2.5 新增 · 必做）
+
+> **背景（踩坑记录）：** v2.5 之前，PRD 的动作入口散在三处——左下角复制、右下角双栏预览+保存、撤销只有快捷键没有按钮。用户提要求时的原话是「**右上角有几个快捷导航，包括「双栏预览」「编辑」「撤销」「保存」「交互原型」「静态图册」几个固定的导航**」，并且「**仅 PRD 的 html 支持编辑、保存、导出**」「**需要登录才可编辑，游客仅可查看**」「**编辑的 PRD 在右上角保留修改记录、修改人、修改内容、修改时间**」。故固化为：**PRD 顶部一排固定导航（六个，顺序不许变）+ 编辑必须先登录 + 右上角常驻改动记录。**
+
+#### ① 六个固定入口（名称、顺序、位置都不许改）
+
+放 `position:fixed; top:0; left:0; right:0` 的顶栏里，右侧对齐。**这六个是"固定导航"，不增不减、不换顺序**：
+
+| # | 按钮 | `data-pm-nav` | 做什么 |
+|---|---|---|---|
+| 1 | 双栏预览 | `dual-pane` | 开关 §2.6 右侧原型面板。**这个按钮就是 §2.6 里原 `.fab-group` 那个开关**——合并进顶栏，不再有右下角开关（见 ⑤） |
+| 2 | 编辑 | `edit` | 进入/退出编辑态。未登录时点击 → 弹登录框；未配账号时 → 弹建账号命令 |
+| 3 | 撤销 | `undo` | 调 `PMEdit.undo()`（§2.7 ⑤）。**v2.5 起从"只有快捷键"升级为常驻按钮**，非编辑态置灰 |
+| 4 | 保存 | `save` | 走 §2.4 保存链路 + 记一条改动记录。**无改动时置灰，有改动时高亮** |
+| 5 | 交互原型 | `prototype` | 新标签打开**活的可交互原型**（§3.8）。未产出交互原型时置灰并给 tooltip 说明 |
+| 6 | 静态图册 | `gallery` | 新标签打开**静态图册页**（§3.0 问一 A 的产物，即 `[需求名]-prototype.html`）。**该页的标题栏与顶栏导航与本页逐项一致**，见 ⑥ |
+
+> **「导出」不占导航位。** 用户要求里的"导出"就是 §2.8 的「📋 一键复制全文」——它**留在左下角不动**（顶栏是六个固定导航，硬塞第七个会破坏"固定"这个约定）。顶栏保持只有六个。
+
+#### ② 权限三态（编辑门禁的全部规则）
+
+| 状态 | 怎么进入 | 双栏预览 | 编辑 | 撤销 | 保存 | 交互原型 | 静态图册 |
+|---|---|---|---|---|---|---|---|
+| **游客** | 默认；或未登录；或**服务连不上**；或服务是 `PM_READ_ONLY=1` | ✅ 可用 | 显示「编辑」，点击弹登录框 | 🚫 置灰 | 🚫 置灰 | ✅ | ✅ |
+| **已登录 · 阅读态** | 登录成功，未点编辑 | ✅ | 显示「编辑」 | 🚫 | 🚫 | ✅ | ✅ |
+| **编辑中** | 点「编辑」 | 显示「收起预览」 | 显示「退出编辑」 | ✅ 有撤销栈时 | ✅ 有改动时高亮 | ✅ | ✅ |
+
+> **判定口径只有一条：能写文件才叫"可编辑"。** 服务连不上、账号没配、`READ_ONLY`、角色是 `viewer`——**这四种全都落进"游客"那一行**，顶栏统一置灰，且 `contenteditable` 一个都不挂。**不许出现"页面能改、保存时才报错"**：那样用户已经改完一篇，才发现白改。
+
+> **游客态下 PRD 依然是一份完整可读的文档**——`§2.7` 的编辑模块照常 `init()`（用于表格手柄与 DOM 结构），但**不挂 `contenteditable`**；`PMEdit.lockEditable()` 负责这一步（见 ⑤）。
+
+#### ③ 登录门禁（本地导出服务内置账号）
+
+**为什么是本地账号而不是公司 SSO：** PRD 常在内网 `file://` / 裸 http 下打开，那里没有可信身份源；而这份文档本来就躺在 PM 自己机器的项目目录里，导出服务也只听 `127.0.0.1`。所以"谁改的"这件事以本机项目为界最实在。要换成 SSO 只改 `/api/login` 一处，前端契约不变。
+
+**账号表：`<项目根>/.pm-workflow/users.json`**（安装器写的 `.gitignore` 已包含 `/.pm-workflow/`，不会跟着产物提交）：
+
+```json
+{ "users": [ { "username": "zhangsan", "name": "张三", "role": "editor",
+               "password": "pbkdf2$<salt>$<hash>", "created_at": "2026-10-14 17:07:44" } ] }
+```
+
+**建账号（三平台命令，生成 PRD 时要把这条命令原样写进产出说明）：**
+
+```sh
+# macOS / Linux
+python3 scripts/start_service.py --add-user 张三 --name 张三            # 交互输入口令
+python3 scripts/start_service.py --list-users                          # 看有哪些账号
+python3 scripts/start_service.py --remove-user zhangsan
+# Windows（没有 python3 命令）
+py -3 scripts\start_service.py --add-user 张三
+```
+
+**接口（都在本地导出服务上）：**
+
+| 接口 | 方法 | 入参 | 返回 | 说明 |
+|---|---|---|---|---|
+| `/api/me` | GET | — | `{auth, user, editing_enabled, read_only}` | 顶栏靠它决定六个入口的可用性。**服务不可达时前端自己合成 `{auth:false, editing_enabled:false, offline:true}`** |
+| `/api/login` | POST | `{username, password}` | `{ok, session, user}` | 未配账号 → 428 + 建账号命令；口令错 → 401；`viewer` 角色 → 403 |
+| `/api/logout` | POST | — | `{ok:true}` | 会话是无状态的，前端丢掉那个串即可 |
+| `/api/change-log` | GET/POST | `?path=` / `{path, entries[]}` | `{entries}` / `{added}` | 见 ④ |
+| `/api/save-html` | POST | `{path, content, revision, summary, where}` | `{ok, revision, updated_by, change, …}` | **v2.5 起必须带有效会话**；`updated_by` 由服务端从会话解出，**不采信前端自报的名字** |
+
+- **会话不做 cookie。** PRD 可能是 `file://` 打开的，向 `127.0.0.1:PORT` 写 cookie 会撞第三方 cookie 策略。改用与 `X-PM-Token` 同一套显式请求头 `X-PM-Session`，页面自己存 `localStorage`。
+- **会话串是无状态签名的**（`base64url(用户名.expiry).hmac`，密钥＝项目 token），所以服务重启不掉线、不需要服务端 session 表；**账号被删或过期，下一次请求立刻失效**（`authenticate()` 每次都会回查 users.json）。
+- **口令用 `pbkdf2-sha256`（12 万轮）+ 每用户独立 salt**，`users.json` 里存的是散列，不是明文。
+- **未登录的报错文案要能直接抄**：`尚未创建编辑账号。在项目目录执行 py -3 scripts\start_service.py --add-user 张三`。**别只说"无权限"**——那是把用户扔在原地。
+
+#### ④ 改动记录（右上角常驻 · 四列 · 随文件走）
+
+**四列固定：修改人 / 修改时间 / 修改内容 / 位置。** 位置写"改了哪一处"（如 `六、详细方案 › 发送弹窗-邮件渠道`），内容写"改了什么"（如 `补充：未配置 SMTP 时入口置灰`）。
+
+**两处存储，各有各的用途，缺一不可：**
+
+| 存在哪 | 谁写 | 用途 | 为什么必须这样 |
+|---|---|---|---|
+| 页面内 `<script type="application/json" id="pm-change-log">`（在 `</body>` 前、**`#prdContent` 之外**） | **服务端在保存时自动注入** | 让记录**随文件走**：PRD 被拷到内网、导出服务连不上时，右上角的修改记录照样能显示 | 它是 DOM 的一部分，§2.4 保存抓 `outerHTML` 时本就会带上；放在 `#prdContent` 之外，§2.8 复制抓正文时又天然带不走——**正文要保持是给人读的，机器元数据不该混进粘贴结果** |
+| `[需求名]/需求文档/.pm-change-log.json` | 服务端 | 全量流水（跨机器、跨浏览器合并），也是注入上面那个块的源 | 页内数组各记各的，合起来才是全量 |
+| 右上角 `.changelog-panel` | 前端渲染 | 给人看 | 进入编辑态才展开；游客看不到（他们也不需要看谁改的） |
+
+**渲染与写入的时机（顺序不能反）：**
+
+1. 点「保存」→ 前端先按 `data-changed` 收集本次改了哪几处 → 拼成 `[{where, summary}]`；
+2. `PMService.save(html, undefined, {where, summary})` → 服务端**先**追加记录、**再**把记录块注入 content、**最后**落盘 —— 所以一次保存就把"改动 + 记录"同时固化；
+3. 服务端把新记录回给前端，右上角面板即时多一行，**不必重新加载页面**。
+
+> **⚠️ 记录不许写进 `#prdContent`。** 实测过的错误做法：把记录表当"附录章节"加进正文——结果 §2.8 复制到钉钉/飞书时，那份对外文档末尾挂着一串"谁在几点改了什么"，评审人分不清这是需求内容还是内部流水。**记录属于工具层，不属于文档正文。**
+
+#### ⑤ 顶栏实现（整段照贴；`#prdContent` 之外、`<body>` 的第一个子元素）
+
+```html
+<header class="topbar" data-pm-topbar="prd">
+  <div class="topbar-title">
+    <span class="tb-mark">SSK</span>
+    <span class="tb-name">AI会议 · 多账号管理</span>
+    <span class="tb-ver">v1.1</span>
+  </div>
+  <nav class="topbar-actions">
+    <button type="button" data-pm-nav="dual-pane" id="navDualPane">双栏预览</button>
+    <button type="button" data-pm-nav="edit"      id="navEdit">编辑</button>
+    <button type="button" data-pm-nav="undo"      id="navUndo" disabled>撤销</button>
+    <button type="button" data-pm-nav="save"      id="navSave" disabled>保存</button>
+    <button type="button" data-pm-nav="prototype" id="navPrototype">交互原型</button>
+    <button type="button" data-pm-nav="gallery"   id="navGallery">静态图册</button>
+    <span class="tb-user" id="tbUser" hidden></span>
+  </nav>
+  <section class="changelog-panel" id="changelogPanel" hidden>
+    <div class="cl-head">修改记录<span class="cl-sub" id="clSub"></span></div>
+    <table class="cl-table">
+      <thead><tr><th>修改人</th><th>修改时间</th><th>修改内容</th><th>位置</th></tr></thead>
+      <tbody id="clBody"></tbody>
+    </table>
+    <p class="cl-empty" id="clEmpty">本次会话还没有保存过改动。</p>
+  </section>
+</header>
+```
+
+```css
+/* 顶栏与标题栏：正文首行标题不重复，故 .doc-title 上移让位 */
+.topbar { position:fixed; top:0; left:0; right:0; z-index:1200; display:flex; align-items:center;
+          gap:16px; padding:10px 24px; background:rgba(255,255,255,.94); backdrop-filter:blur(8px);
+          border-bottom:1px solid var(--pm-line); font-family:inherit; }
+.topbar-title { display:flex; align-items:baseline; gap:9px; min-width:0; }
+.topbar-title .tb-mark { font-weight:800; color:#fff; background:var(--pm-accent); border-radius:6px; padding:2px 7px; font-size:12px; }
+.topbar-title .tb-name { font-weight:800; font-size:15px; color:var(--pm-heading); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.topbar-title .tb-ver { font-size:12px; color:#8a86b8; font-variant-numeric:tabular-nums; }
+.topbar-actions { margin-left:auto; display:flex; align-items:center; gap:6px; }
+.topbar-actions button { font:inherit; font-size:13px; font-weight:600; color:#3b357a; background:#fff;
+                         border:1px solid #d8d4f0; border-radius:8px; padding:7px 13px; cursor:pointer; line-height:1.2; }
+.topbar-actions button:hover:not(:disabled) { border-color:var(--pm-accent); color:var(--pm-accent); }
+.topbar-actions button:disabled { opacity:.42; cursor:not-allowed; }
+.topbar-actions button.is-on { background:var(--pm-accent); border-color:var(--pm-accent); color:#fff; }
+.topbar-actions button.is-dirty { background:#fff7e6; border-color:#f0b429; color:#8a5a00; }
+.tb-user { font-size:12px; color:#5b5b8a; background:var(--pm-soft); border-radius:999px; padding:4px 11px; white-space:nowrap; }
+body.pm-editing .topbar { box-shadow:0 2px 14px rgba(91,91,214,.16); }
+/* 正文顶部留出顶栏高度；原 .doc-title 不再重复产品名 */
+body { padding-top:60px; }
+.changelog-panel { position:absolute; top:100%; right:24px; width:min(720px,92vw); max-height:46vh; overflow:auto;
+                   background:#fff; border:1px solid var(--pm-line); border-radius:10px; padding:12px 14px;
+                   box-shadow:0 12px 34px rgba(30,24,80,.14); }
+.cl-head { font-weight:700; font-size:13px; color:var(--pm-heading); margin-bottom:8px; }
+.cl-head .cl-sub { font-weight:400; color:#8a86b8; margin-left:8px; font-size:12px; }
+.cl-table { width:100%; border-collapse:collapse; font-size:12.5px; }
+.cl-table th, .cl-table td { border:1px solid var(--pm-line); padding:5px 8px; text-align:left; vertical-align:top; }
+.cl-table th { background:var(--pm-soft); font-weight:700; white-space:nowrap; }
+.cl-table td:nth-child(1) { white-space:nowrap; } .cl-table td:nth-child(2) { white-space:nowrap; font-variant-numeric:tabular-nums; }
+.cl-empty { color:#8a86b8; font-size:12.5px; margin:8px 2px 0; }
+/* 登录框 */
+.pm-login-mask { position:fixed; inset:0; z-index:1300; background:rgba(24,20,60,.42); display:flex; align-items:center; justify-content:center; }
+.pm-login-box { width:340px; background:#fff; border-radius:14px; padding:22px 22px 18px; box-shadow:0 20px 48px rgba(20,16,70,.3); }
+.pm-login-box h3 { margin:0 0 4px; font-size:16px; color:var(--pm-heading); }
+.pm-login-box p { margin:0 0 14px; font-size:12.5px; color:#8a86b8; }
+.pm-login-box label { display:block; font-size:12.5px; color:#4a4576; margin:9px 0 4px; }
+.pm-login-box input { width:100%; box-sizing:border-box; font:inherit; font-size:13.5px; padding:8px 10px;
+                      border:1px solid #d8d4f0; border-radius:8px; }
+.pm-login-box .err { color:#c0392b; font-size:12.5px; margin-top:9px; min-height:16px; }
+.pm-login-box .row { display:flex; gap:8px; margin-top:14px; }
+.pm-login-box .row button { flex:1; font:inherit; font-size:13.5px; font-weight:700; padding:9px; border-radius:9px; cursor:pointer; border:1px solid #d8d4f0; background:#fff; color:#3b357a; }
+.pm-login-box .row button.primary { background:var(--pm-accent); border-color:var(--pm-accent); color:#fff; }
+@media (max-width:1100px){ .topbar-title .tb-name{ max-width:190px; } }
+```
+
+```js
+/* ===== PM 顶栏模块：六个固定入口 + 登录门禁 + 改动记录（§2.10）=====
+   依赖：prototype-export-client.js（window.PMService）×§2.7（window.PMEdit）
+   无服务时整站降级为游客只读——不弹错、不挂 contenteditable，只是不能改。      */
+(function () {
+  var LINKS = window.PM_LINKS || {};                 // { gallery:'…', prototype:'…' }
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var nav = function (n) { return document.querySelector('[data-pm-nav="' + n + '"]'); };
+  var S = { auth: false, user: null, configured: false, offline: false, editing: false, dirty: false };
+
+  function toast(msg, err) {
+    var el = $('#pmTopbarToast');
+    if (!el) {
+      el = document.createElement('div'); el.id = 'pmTopbarToast'; el.className = 'copy-toast';
+      document.body.appendChild(el);
+    }
+    el.textContent = msg; el.style.background = err ? '#c0392b' : '#2a2459'; el.classList.add('show');
+    clearTimeout(toast._t); toast._t = setTimeout(function () { el.classList.remove('show'); }, 3200);
+  }
+
+  /* ① 游客态：把 §2.7 模块已挂上的 contenteditable 全部摘掉
+     ⚠️ 三个坑，全都实测踩过，一个都不能少：
+        1. 解锁必须按 data-pm-locked 找，不能再用 [contenteditable] 找——锁上时属性已被摘掉，
+           用原选择器一个都匹配不到（登录后仍然不能编辑）。§2.7 的 PMEdit.init() 有 WeakMap 守卫，
+           也不会帮你把 contenteditable 加回来。
+        2. **必须记住原值再还回去**。§2.7 给表格包裹层 .editable-table-wrap 设的是
+           contenteditable="false"（防止整块表格被当成一个编辑框）；如果解锁时一律写回 "true"，
+           包裹层就升级成了编辑宿主，浏览器把焦点给它、td 上根本收不到 focus/input，
+           §2.7 的变更追踪与撤销栈整条哑掉（实测：打字有字、data-changed 不亮、撤销没反应）。
+        3. 不要把整个属性删掉再统一按 true 恢复——同理，`""` 与 `"true"` 之外的值都要原样带回。 */
+  function lockEditable(lock) {
+    document.querySelectorAll('#prdContent [contenteditable], #prdContent [data-pm-locked]')
+      .forEach(function (el) {
+        if (lock) {
+          var cur = el.getAttribute('contenteditable');
+          if (cur === null) return;
+          el.setAttribute('data-pm-locked', cur);       // 原值存档（可能是 "true"/"false"/""）
+          el.removeAttribute('contenteditable');
+        } else {
+          var orig = el.getAttribute('data-pm-locked');
+          if (orig === null) return;
+          el.setAttribute('contenteditable', orig === '' ? 'true' : orig);
+          el.removeAttribute('data-pm-locked');
+        }
+      });
+  }
+
+  /* ② 六个入口的可用性由 S 一处推导，别在各按钮里各判一遍 */
+  function currentPage() {
+    var el = document.querySelector('[data-pm-topbar]');
+    return (el && el.getAttribute('data-pm-topbar')) || 'prd';   // prd / gallery
+  }
+  function render() {
+    var e = nav('edit'), u = nav('undo'), s = nav('save');
+    if (!e) return;
+    u.disabled = !S.editing; s.disabled = !S.editing;
+    s.classList.toggle('is-dirty', S.editing && S.dirty);
+    e.classList.toggle('is-on', S.editing);
+    e.textContent = S.editing ? '退出编辑' : '编辑';
+    var chip = $('#tbUser');
+    if (chip) { chip.hidden = !S.auth; chip.textContent = S.auth ? (S.user.name + (S.dirty ? ' · 未保存' : '')) : ''; }
+    document.body.classList.toggle('pm-editing', S.editing);
+    var panel = $('#changelogPanel'); if (panel) panel.hidden = !S.editing;
+    // 「交互原型」「静态图册」是页面级导航：当前所在的那一页高亮 + 置灰（点了没意义），
+    // 未产出（LINKS 里没配）的也置灰，并用 title 说明原因。图册页靠 data-pm-topbar="gallery" 声明自己是谁。
+    var here = currentPage();
+    [['prototype', 'prototype'], ['gallery', 'gallery']].forEach(function (pair) {
+      var btn = nav(pair[0]); if (!btn) return;
+      var isHere = (here === pair[1]);
+      btn.classList.toggle('is-on', isHere);
+      btn.disabled = isHere ? true : !LINKS[pair[1]];
+      btn.title = isHere ? '当前就在这一页'
+        : (LINKS[pair[1]] ? '' : (pair[1] === 'gallery' ? '本次未产出静态图册' : '本次未产出可交互原型（§3.0 问一选 A）'));
+    });
+    var dp = nav('dual-pane');
+    if (dp) dp.textContent = document.body.classList.contains('dual-pane') ? '收起预览' : '双栏预览';
+  }
+
+  /* ③ 登录框 */
+  function askLogin(notice) {
+    if (S.offline) { toast('连不上本地导出服务，当前为游客只读。请双击项目根目录的「启动原型导出服务」后再编辑。', true); return; }
+    if (!S.configured) { toast('尚未创建编辑账号。在项目目录执行：py -3 scripts\\start_service.py --add-user 张三', true); return; }
+    var mask = document.createElement('div'); mask.className = 'pm-login-mask';
+    mask.innerHTML = '<div class="pm-login-box"><h3>登录后编辑</h3>'
+      + '<p>未登录只能查看。登录账号由本地导出服务管理。</p>'
+      + '<label>用户名</label><input id="pmU" autocomplete="username">'
+      + '<label>口令</label><input id="pmP" type="password" autocomplete="current-password">'
+      + '<p class="err" id="pmErr"></p>'
+      + '<div class="row"><button type="button" id="pmCancel">取消</button>'
+      + '<button type="button" class="primary" id="pmOk">登录</button></div></div>';
+    document.body.appendChild(mask);
+    var close = function () { mask.remove(); };
+    mask.addEventListener('click', function (ev) { if (ev.target === mask) close(); });
+    $('#pmCancel', mask).addEventListener('click', close);
+    $('#pmU', mask).focus();
+    $('#pmOk', mask).addEventListener('click', async function () {
+      var err = $('#pmErr', mask);
+      err.textContent = '';
+      try {
+        var r = await window.PMService.login($('#pmU', mask).value.trim(), $('#pmP', mask).value);
+        S.auth = true; S.user = r.user; S.configured = true; close();
+        setEditing(true); toast('已登录：' + S.user.name);
+      } catch (ex) { err.textContent = (ex && ex.message) || '登录失败'; }
+    });
+    mask.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') $('#pmOk', mask).click(); });
+  }
+
+  /* ④ 编辑态切换：进入才挂 contenteditable，退出就摘掉（游客态与之一致） */
+  function setEditing(on) {
+    S.editing = !!on;
+    lockEditable(!S.editing);
+    if (window.PMEdit) { if (S.editing) window.PMEdit.init(document); }
+    if (S.editing) loadChangeLog();
+    render();
+  }
+
+  /* ⑤ 改动记录：优先读服务端，读不到回落到 HTML 内嵌的 #pm-change-log 块 */
+  function readEmbedded() {
+    var el = document.getElementById('pm-change-log');
+    if (!el) return [];
+    try { return (JSON.parse(el.textContent) || {}).entries || []; } catch (e) { return []; }
+  }
+  function paint(entries) {
+    var body = $('#clBody'); if (!body) return;
+    body.innerHTML = '';
+    (entries || []).slice().reverse().forEach(function (r) {
+      var tr = document.createElement('tr');
+      [r.by, r.at, r.summary, r.where].forEach(function (v) {
+        var td = document.createElement('td'); td.textContent = v || ''; tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+    var empty = $('#clEmpty'); if (empty) empty.hidden = (entries || []).length > 0;
+    var sub = $('#clSub'); if (sub) sub.textContent = (entries || []).length ? '（共 ' + entries.length + ' 条）' : '';
+  }
+  async function loadChangeLog() {
+    var entries = readEmbedded();
+    if (window.PMService && window.PMService.changeLog) {
+      try { var live = await window.PMService.changeLog(); if (live && live.length) entries = live; } catch (e) { /* 离线用内嵌 */ }
+    }
+    paint(entries);
+  }
+
+  /* ⑥ 收集本次改了哪几处 → 拼成 [{where, summary}]（供保存时一并记录） */
+  function collectChanges() {
+    var out = [];
+    document.querySelectorAll('#prdContent [data-changed="true"]').forEach(function (el) {
+      var where = '';
+      var row = el.closest('tr'), table = el.closest('table');
+      if (row && table) {
+        var heads = table.querySelectorAll('thead th, tr:first-child th');
+        var cell = el.closest('td,th'), idx = cell ? Array.prototype.indexOf.call(row.cells, cell) : 0;
+        where = '详细方案 › 第 ' + (Array.prototype.indexOf.call(row.parentNode.rows, row) + 1) + ' 行'
+              + (heads[idx] ? '（' + heads[idx].textContent.trim() + '）' : '');
+      } else {
+        var sec = el.closest('section') || el.closest('main');
+        where = (sec && sec.querySelector('h2') ? sec.querySelector('h2').textContent.trim() : '正文');
+      }
+      var text = (el.innerText || '').replace(/\s+/g, ' ').trim();
+      out.push({ where: where, summary: '改为：' + (text.length > 60 ? text.slice(0, 60) + '…' : text) });
+    });
+    if (!out.length) out.push({ where: '整篇', summary: '保存整篇' });
+    return out.slice(0, 20);        // 一次保存最多记 20 处，避免刷屏式记录
+  }
+
+  /* ⑦ 保存：抓 outerHTML → 服务端覆写 + 记改动；成功后右上角即时补一行 */
+  async function saveAll() {
+    if (!S.editing) return;
+    var btn = nav('save'); if (btn) btn.disabled = true;
+    try {
+      if (!window.PMService.revision) throw new Error('导出客户端未加载');
+      // ① 先结算正在输入的那一笔：§2.7 的 input 有 600ms 去抖，不 blur 的话
+      //    data-changed 还没落上，collectChanges() 会读到空的改动清单（实测踩过）。
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+      await new Promise(function (r) { setTimeout(r, 0); });
+      var changes = collectChanges();
+      document.querySelectorAll('[data-pm-locked]').forEach(function (el) { el.removeAttribute('data-pm-locked'); });
+      var html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+      var r = await window.PMService.save(html, undefined, { where: changes[0].where, summary: changes[0].summary });
+      // ② 记录以服务端为准回刷（服务端刚把新条目注进 HTML），别在本地 push——两次保存会重复
+      S.dirty = false; render();
+      if (!S.offline) { await loadChangeLog(); }
+      else { var e = readEmbedded(); e.push(r.change); paint(e); }
+      toast('已保存（' + (r.updated_by || '') + '）· 本次记录 ' + changes.length + ' 处');
+    } catch (ex) {
+      var msg = (ex && ex.message) || '保存失败';
+      if (/请先登录/.test(msg)) { S.auth = false; setEditing(false); }
+      toast(msg, true);
+    } finally { if (btn) btn.disabled = !S.editing; }
+  }
+
+  /* ⑧ 绑定（六个入口一次绑好；撤销按钮复用 §2.7 的栈） */
+  function bind() {
+    var dp = nav('dual-pane'); if (dp) dp.addEventListener('click', function () { window.toggleDualPane(); render(); });
+    nav('edit').addEventListener('click', function () {
+      if (S.editing) { if (S.dirty && !confirm('还有未保存的改动，确定退出编辑？')) return; setEditing(false); return; }
+      S.auth ? setEditing(true) : askLogin();
+    });
+    nav('undo').addEventListener('click', function () {
+      if (!window.PMEdit) return;
+      window.PMEdit.undo(); S.dirty = true; render();
+    });
+    nav('save').addEventListener('click', saveAll);
+    nav('prototype').addEventListener('click', function () { if (LINKS.prototype) window.open(LINKS.prototype, '_blank'); });
+    nav('gallery').addEventListener('click', function () { if (LINKS.gallery) window.open(LINKS.gallery, '_blank'); });
+    // 任何编辑落进正文 → 保存按钮高亮（复用一个 passive 监听，别动 §2.7 内部逻辑）
+    document.addEventListener('input', function (ev) {
+      if (!S.editing || !ev.target.closest || !ev.target.closest('#prdContent')) return;
+      if (!S.dirty) { S.dirty = true; render(); }
+    }, true);
+    // 表格增删行/拖拽尺寸不经 input 事件，用 §2.7 的 toast 侧信道兜底
+    var mo = new MutationObserver(function () { if (S.editing && !S.dirty) { S.dirty = true; render(); } });
+    var root = $('#prdContent'); if (root) mo.observe(root, { childList: true, subtree: true });
+  }
+
+  /* ⑨ 启动：先问身份，再决定挂不挂 contenteditable */
+  async function boot() {
+    var me = { auth: false, user: null, editing_enabled: false, offline: true };
+    try { if (window.PMService && window.PMService.me) me = await window.PMService.me(); } catch (e) { /* 游客 */ }
+    S.auth = !!me.auth; S.user = me.user || null;
+    S.configured = !!me.editing_enabled; S.offline = !!me.offline || !!me.read_only;
+    // 版本号要先取回来：PMService.save 靠它与磁盘 sha256 比对来防空写覆盖，
+    // 没取过就会直接抛「尚未读取文件版本」——实测踩过（保存按钮点了没反应，只弹一句错）。
+    if (!S.offline && window.PMService && window.PMService.revision) {
+      try { await window.PMService.revision(); } catch (e) { /* 保存时会给准确报错 */ }
+    }
+    lockEditable(true);                       // 未进入编辑态前一律只读
+    render(); bind();
+    if (S.auth) await loadChangeLog();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+  window.PMTopbar = { state: S, refresh: render, setEditing: setEditing, lockEditable: lockEditable };
+})();
+```
+
+> **两个必须记住的接线细节：**
+> 1. **`#prdContent` 必须存在**——`lockEditable()` / `collectChanges()` 都按它取范围。这是 §2.2 既有的容器约定，不用新增。
+> 2. **§2.6 的 `.fab-group` 与 §2.4 的 `.save-btn-container` 一并撤销**——它们的两个动作（双栏预览、保存）已并入顶栏。留在页面上会出现"两个保存按钮、状态还不一样"，评审时必被当成 bug。**§2.8 的 `.copy-all-fab` 保留在左下角不动。**
+
+#### ⑥ 静态图册页：标题栏与导航与 PRD 页**逐项一致**
+
+静态图册页（§3.0 问一 A 的产物，`[需求名]/原型/[需求名]-prototype.html`）**必须复用本节的同一套顶栏**：同一个 `.topbar` 结构、同一个标题栏（`.tb-mark` + 产品名 + 版本号）、同样六个 `data-pm-nav` 按钮、同样的 CSS 变量来源。
+
+- 差异**只允许两处**：① `.tb-user` 与 `.changelog-panel` 不出现（图册不可编辑）；② **顶栏容器上写 `data-pm-topbar="gallery"`**（PRD 页写 `data-pm-topbar="prd"`）——模块据此把「静态图册」按钮标为当前页（`is-on` + 置灰），另一页的对应按钮则照常可跳转。
+- **标题栏文案要与 PRD 完全一致**（同一个产品名、同一个版本号）——用户的原话是「**静态图册页的导航以及标题栏与 PRD 页的保持统一**」。两页并排时应该看不出是两个人做的。
+- 图册页也 `boot()` 同一个模块：`PMEdit` 不存在 → 「撤销/保存」天然置灰；`/api/me` 返回游客 → 编辑入口弹登录框。**不要为图册页另写一套顶栏逻辑。**
+
+> **⚠️ 嵌进 PRD 时不重复显示顶栏。** 图册页会被 §2.6 的双栏预览与 §3.3 的原型列当 iframe 嵌入——同一套顶栏会嵌出"栏中栏"。用**自检**而不是 URL 参数来区分（避免 §3.10 那类参数驱动）：
+
+```js
+// 图册页 / 原型页顶部，放在 PMTopbar 模块之后
+if (window.self !== window.top) document.body.classList.add('pm-embedded');
+```
+
+```css
+/* 嵌在 iframe 里时不显示顶栏，独立打开才显示 */
+body.pm-embedded .topbar { display:none; }
+```
+
+#### ⑦ 交互原型页：**不加导航**
+
+「交互原型」按钮打开的那份**活原型**（§3.8 的产物）**一律不挂本节顶栏**——不挂 `.topbar`、不加 `data-pm-nav`、不加任何本流程的导航外壳。
+
+> **根因（v2.5 修正）：** §3.8 旧文要求"可交互版是**新增的第二个文件**（如 `[需求名]-prototype-flow.html`）"，实测产出的是一个**薄外壳**——里面只有一个 `<header><b>XX · V2 交互评审</b><span>演示数据</span></header>` 加一个 `<iframe src="…?demo=1&review=1">` 包着真页面。这个外壳既违反了 §3.10（导航栏上的评审标签），又让"交互原型"变成了一层应当由产品自己决定长相的东西。
+>
+> **正确做法：** 用户给的就是**已有的产品代码**，直接在它上面改；需要新增页面时再新增，不需要时就在已有代码上改；**新增页面的命名参照那份代码原有的命名风格**（`transcript-*` / `translate-*` 这样的前缀体系，见 §3.7.2）。**不写薄外壳文件。** 详见 §3.8 的改写。
+
+#### ⑧ 30 秒自检（交付前逐条过）
+
+| # | 检查 | 不合格的样子 |
+|---|---|---|
+| 1 | 顶栏恰有六个 `data-pm-nav`，顺序为 `dual-pane / edit / undo / save / prototype / gallery` | 少了撤销按钮；或擅自加了第七个（如"修改记录"按钮） |
+| 2 | 顶栏在 `#prdContent` **之外**（`<body>` 第一个子元素） | 放进 `#prdContent` 里 → 被 §2.8 复制出去 |
+| 3 | 未登录时 `#prdContent` 内 `[contenteditable]` 数量为 **0** | 游客能直接改正文，"登录才可编辑"形同虚设 |
+| 4 | 未登录点「保存」给出的是**可抄的建账号命令**，不是"无权限" | 提示语只写"操作失败" |
+| 5 | 保存一次后，HTML 尾部出现唯一的 `<script id="pm-change-log">`，且四列齐全 | 记录块被插了两次；或缺「位置」列 |
+| 6 | 记录**不在** `#prdContent` 里（复制全文粘出去不应带记录表） | 记录被当成"附录章节"写进正文 |
+| 7 | 静态图册页的 `.topbar` 结构与文案与 PRD 页一致 | 图册页顶栏是另一套按钮/另一个产品名 |
+| 8 | 交互原型页**没有** `.topbar` / `data-pm-nav`；且**不存在** `*-prototype-flow.html` 这类薄外壳 | 原型页顶上多了一条我方导航；或真的产出了薄外壳文件 |
 
 ---
 
@@ -1161,9 +1619,11 @@ PRD HTML 会被推到公司内网供多人浏览。内网是 `http://` 非 local
 
 | 选项 | 说明 | 典型场景 |
 |---|---|---|
-| **A. 静态画廊** | 全部界面平铺一页、带 hash 可单页寻址；**只能看，不能点** | 评审、导出截图、嵌入 PRD（本流程的默认形态） |
+| **A. 静态图册** | 全部界面平铺一页、带 hash 可单页寻址；**只能看，不能点**。产出 `[需求名]/原型/[需求名]-prototype.html`，并**挂上 §2.10 的统一顶栏与标题栏**（与 PRD 页一致） | 评审、导出截图、嵌入 PRD（本流程的默认形态） |
 | **B. 可交互原型** | 单个窗口 + 状态机，能点着走完整流程 | 需求评审要"演一遍"、给研发或客户上手体验 |
-| **C. 两者都要** | 画廊版供评审截图、交互版供体验；**两个文件，共用同一份界面定义** | 正式需求，多数情况选这个 |
+| **C. 两者都要** | 图册版供评审截图、交互版供体验。**图册版仍是 `[需求名]/原型/[需求名]-prototype.html`；交互版不是"再写一个薄外壳文件"，而是在宿主代码上迭代**——见 §3.8 的关系说明 | 正式需求，多数情况选这个 |
+
+> **⚠️ v2.5 修正：交互版不许写成"薄外壳"。** 旧文写的是"两个文件，共用同一份界面定义"，实测被理解成**新写一个 `[需求名]-prototype-flow.html`**，里面只有一条 `<header>XX · V2 交互评审</header>` 加一个 `<iframe src="…?review=1">` 包着真页面——这既违反 §3.10（导航栏上挂评审标签），又凭空造了一层"产品自己没决定过长什么样"的壳。**正确做法见 §3.8：有宿主代码就在宿主代码上改，没有才按 §3.1 起一份；需要新增页面时再新增，命名沿用宿主原有风格。**
 
 **问二 · 实现来源**（在什么基础上做）
 
@@ -1323,6 +1783,7 @@ setTimeout(scalePrototypes, 500); // 兜底：确保 iframe 加载后尺寸正�
 > - 不要额外做全局”缩放操作面板”。
 > - `border: none; background: transparent;` 去除外框，避免双重边框视觉问题。
 > - 相对路径基于 PRD 文件所在目录（`[需求名]/需求文档/`）往上一级，再进同需求的 `[需求名]/原型/` 目录。PRD 与原型同属一个需求顶层目录、互为同级，故 iframe 的 `src` 仍写 `../原型/[需求名]-prototype.html#page-id`（路径值不变）。
+> - **⚠️ v2.5：静态图册页顶部现在也有顶栏**（§2.10 ⑥，与 PRD 页统一）。被这里或 §2.6 的双栏预览当 iframe 嵌进来时，**它必须自动隐藏顶栏**，否则会嵌出"栏中栏"——判据和写法见 §2.10 ⑥ 的 `body.pm-embedded`（用 `window.self !== window.top` 自检，**不要用 `?embed=1` 这类参数**，那正是 §3.10 要禁的参数驱动）。
 
 ### 3.4 原型交互增强规范
 
@@ -1782,11 +2243,34 @@ Pencil 设计稿完成后，**必须反向校准 HTML 原型**使两端视觉一
 
 ### 3.8 可交互原型（§3.0 问一选 B / C 时必做）
 
-> **触发条件：** 形态选了 B（可交互原型）或 C（两者都要）。选 A（仅静态画廊）时跳过本节。
+> **触发条件：** 形态选了 B（可交互原型）或 C（两者都要）。选 A（仅静态图册）时跳过本节。
 >
 > **形态定义：** 打开就是**一个窗口**，点击能推进流程、状态能留存、能走完一条完整链路——不是把 N 个界面并排摆着看。
+
+#### ⚠️ v2.5 修正：**不写"薄外壳"，直接在已有代码上改**
+
+> **根因（实测踩坑）：** 本节旧文写「可交互版是**新增的第二个文件**（如 `[需求名]-prototype-flow.html`），**不许改造画廊版**」。照此产出的东西是一个**薄外壳**——里面只有一条导航栏加一个 `<iframe>` 包着真页面：
+
+```html
+<!-- ❌ 实测产出（在 v1.4.1 里抓到的反例，同时违反 §3.10） -->
+<header><b>AI会议 · V2 交互评审</b><span>演示数据</span><button data-entry="…">…</button></header>
+<iframe id="flowFrame" src="../../ResourcePanel.html?demo=1&review=1&edition=meeting&role=platform_admin"></iframe>
+```
+
+> 它有三个毛病：① 导航栏上挂「V2 交互评审 / 演示数据」，是 §3.10 明令禁止的评审专用内容；② `<iframe>` 套真页面，点击链路要跨框架，状态机根本没法统一管；③ **这层壳是产品自己没决定过的东西**——真上线后不会存在，却要在评审里被当成界面看。
 >
-> **与静态画廊的关系：** 可交互版是**新增的第二个文件**（如 `[需求名]-prototype-flow.html`），**不许改造画廊版**——画廊版还要用于导出截图与嵌入 PRD；加了状态机后，多个界面无法再同时展示，截图也会带上"某一时刻的状态"，不再是干净界面。
+> **正确做法（用户原话：「不要单独写薄外壳的 -prototype-flow.html，用户会提供已有的代码，在已有的代码基础上修改，如果需要新增页面时再新增，不需新增时就在已有代码的基础上修改。修改页面的命名也要参照以前代码命名的风格。」）：**
+
+| 情况 | 怎么做 |
+|---|---|
+| **用户给了宿主代码**（§3.0 问二选 B） | **直接在宿主代码上改**：按 §3.0 问三的落点落改动，交互能力加在真页面上。**不新建外壳文件、不套 iframe** |
+| 需要新增页面 | 再新增。**命名沿用宿主原有风格**（如 `transcript-*` / `translate-*` 这类前缀体系，见 §3.7.2），不要另起一套 |
+| 不需要新增页面 | 就在已有代码上改，页数不变 |
+| **用户没给宿主代码**（§3.0 问二选 A） | 按 §3.1 从零起 `[需求名]/原型/[需求名]-prototype.html`（静态图册）；交互能力**加在同一份文件的 #hash 场景上**，而不是再套一层壳 |
+
+> **和静态图册的关系（v2.5 重新表述）：** 图册版与交互版**内容同源，但不是"两个文件去同步"**——图册版仍是 `[需求名]-prototype.html`（平铺、可 hash 寻址、挂 §2.10 统一顶栏），供导出截图与嵌入 PRD；交互版是在**产品自己的页面**上把状态机做进去。两者共用同一份界面定义（文案 / 数据 / 状态），由 §3.6 逐页校验对齐。
+>
+> **一句话判据：我要写的这个文件，产品上线后还会存在吗？** 不会 → 那它就是一层壳，删掉，把交互做进真页面。
 
 **交互能力分三层，做到哪一层必须先确认**（"体验所有交互逻辑"的重量全压在第三层）：
 
@@ -1800,13 +2284,16 @@ Pencil 设计稿完成后，**必须反向校准 HTML 原型**使两端视觉一
 
 **实现要求：**
 
-1. **单一入口**：一个 HTML 文件，打开即进入第一个界面；用 JS 状态机切换界面，而不是 `#hash` 平铺。
-2. **状态集中管理**：把界面定义、假数据、当前状态抽成**一个 JS 数据对象**，不要散落在 DOM 里——这是让原型"能走通"而不是"看起来能走通"的关键。
+1. **单一入口（按来源分两种）**：
+   - 问二选 A（从零生成）→ 一个 HTML 文件（`[需求名]-prototype.html`），打开即进入第一个界面；用 JS 状态机切换界面，而不是 `#hash` 平铺。
+   - 问二选 B（宿主代码）→ **入口就是产品自己的那个入口页**（如工作台首页 / 详情页），**不加壳、不加 `-flow.html`**；状态机做在宿主页共用的那份 JS 里（见第 2 条）。
+2. **状态集中管理**：把界面定义、假数据、当前状态抽成**一个 JS 数据对象**，不要散落在 DOM 里——这是让原型"能走通"而不是"看起来能走通"的关键。宿主代码里通常已有状态管理（store / 数据对象）；**优先复用宿主的，不要另起一套**。
 3. **可回退**：每个界面都要有返回 / 关闭路径，不许走进死胡同。
 4. **假数据可辨认 —— 辨认的是"数据"，不是"界面"**：演示数据统一收在**数据对象顶部**（一处可改、便于换成真实数据），靠**数据本身**（人名、时间、数值看得出是样例）被认出来，避免被误当成真实逻辑。**禁止在界面上加任何"这是演示数据 / 仅供评审"的横幅、角标、水印或提示条**（见 §3.10）——那既不统一风格，又让评审分不清"这条文案是产品要做的，还是原型作者加的注解"。
    > **⚠️ 本节旧文写作"演示数据**在文案上可识别**"，已被理解成"要在界面上声明它是假数据"，实测在产出里长出了横幅与导航栏标签（§3.10 反例）。"可辨认"指数据可辨认，不是界面要自我声明。**
 5. **仍然遵守 §3.1 第 12 条**：文案 / 数据 / 状态 / 流程与 PRD 逐条一致。
 6. 若同时基于已有代码库（§3.0 问二选 B），命名与样式**仍以宿主代码库为准**，见 §3.7.2。
+7. **交互原型页不加任何本流程的导航外壳**（v2.5 新增）：不挂 §2.10 的 `.topbar`、不加 `data-pm-nav`、不写「XX 交互评审 / 演示数据」这类题头。**它是产品自己的页面，就按产品原本的样子展示。** PRD 顶栏的「交互原型」按钮只是一个**新标签打开它的入口**（§2.10 ①），跳过去之后不该再看到 PRD 那一套按钮。
 
 ---
 
@@ -2211,6 +2698,7 @@ const EDGES = [
 >
 > **§3.9 里能被机械判定的是"图在不在、旧不旧"；"代码到底有没有被改"仍需人工按 §3.9 的自证清单报数字**——脚本只能保证图不是陈旧产物，保证不了代码被改过。
 > **§3.10 同样只做了"文案扫描"这一层**：脚本能抓出原型里写死的评审专用字样，**抓不出"某个元素虽然不叫演示数据、但产品上线后根本不会有"**——那类要人工按 §3.10 的 30 秒自检逐屏过。
+> **§2.10 能机械判定的同样只是一部分**：脚本查「六个 `data-pm-nav` 齐不齐、顺序对不对、顶栏在不在 `#prdContent` 之外、静态图册页的导航与标题栏跟 PRD 页一不一致、交互原型页有没有被加上我方导航、有没有残留 `*-prototype-flow.html` 薄外壳」；**"游客态下是不是真的一个 `contenteditable` 都没挂""保存后记录块的四个字段是不是都真填上了"必须人工实测**（`.agents/workflows` 里跑不了浏览器）。
 > **脚本通过 ≠ 合格**——视觉与内容质量仍需按下面的清单人工过；但**脚本不过就一定不合格**，先修到绿再往下走。
 
 交付前确认（标 ★ 为核心骨架，始终检查；其余仅在该章节本次保留时检查）：
@@ -2233,6 +2721,11 @@ const EDGES = [
 - [ ] ★ **§3.9 铁律 1：产出/更新 PRD 的同时，原型代码被真实修改过**——能指出改了哪几个文件（路径 + mtime，或 `git diff --stat`）。**"只出了 PRD / 只出了改动清单、代码没动"直接判不合格**
 - [ ] ★ **§3.9 铁律 2 + 3：PRD 里引用的每一张原型图，都是本次原型代码的真实渲染**——一图 ↔ 代码里一个可寻址的界面；图为本地导出服务产出（非手绘 / 非设计工具另做 / 非别处拷来 / 非上一版旧图）；`原型截图/*.png` 的 mtime **全部 ≥** 对应原型代码的 mtime
 - [ ] ★ **原型里没有"评审专用"内容（§3.10）**：逐屏看一遍——无"演示数据 / 此原型用于产品评审 / 非客户真实使用"之类的横幅、角标、水印；导航栏上无评审标签；没有新增只在评审时加载的样式/脚本文件；没有用 `?review=1` 之类参数让页面多渲染一条声明；**宿主页原本的产品提示（如"请勿外发"的安全提示）保留、未被误删**
+- [ ] ★ **顶栏六个固定导航齐全且顺序正确**（§2.10）：`dual-pane / edit / undo / save / prototype / gallery` 六个 `data-pm-nav` 一个不少、一个不多；顶栏在 `#prdContent` **之外**（`<body>` 第一个子元素）；**页面上没有残留的右下角 `.fab-group` / `.save-btn-container`**（会出现两个保存按钮）
+- [ ] ★ **游客态实测**（§2.10 ②）：不登录直接打开，`#prdContent` 里 `[contenteditable]` 数量为 **0**（改不动）；「撤销/保存」置灰；点「编辑」弹出的是登录框（未配账号时给的是可抄的 `--add-user` 命令），**不是一句"无权限"**
+- [ ] ★ **登录 → 编辑 → 保存 → 改动记录实测一轮**（§2.10 ③④）：登录后能改；保存后文件尾部出现**唯一**的一个 `<script id="pm-change-log">`（`#prdContent` 之外），四列「修改人/修改时间/修改内容/位置」都真填上了；**同一份 PRD 连存两次，记录块不重复插入、记录条数递增**
+- [ ] ★ **静态图册页外壳与 PRD 页统一**（§2.10 ⑥）：图册页 `.topbar` 的结构、六个 `data-pm-nav`、标题栏文案与 PRD 页逐项一致；被 iframe 嵌入时顶栏不重复显示（`body.pm-embedded`）
+- [ ] ★ **交互原型页没有本流程的导航**（§2.10 ⑦ / §3.8）：打开它看不到 `.topbar`；项目里**不存在** `*-prototype-flow.html` 这类薄外壳文件
 - [ ] ★ 原型中所有文案/数据/状态 与 PRD「详细方案」描述列完全一致（已通过 3.6 自查）
 - [ ] ★ 「📋 一键复制全文」实测粘贴一次：原型 iframe 已变成图片（或服务未启动时**如实提示**了「原型图缺失」，不是静默丢图）——见 §2.8
 - [ ] ★ 粘出去的图**放大到 1000px 以上**再看一眼是否清晰——按文档里的默认显示尺寸（约 335px）看，任何分辨率都一样，糊不糊在这个尺寸下根本看不出来。见 §2.8 ⑤
@@ -2273,12 +2766,13 @@ const EDGES = [
 | 11 | 八、时序图（PRD 内源码文本块） | 编排顺序/分支/推进条件/异常口径变化 → 同步总时序源码；新增关键对象或状态 → 补状态图源码（见 §4.7） |
 | 12 | 上线计划（若存在） | 是否影响排期或灰度策略 |
 | 13 | 附录（若存在） | 是否新增决策项、是否影响文案风格 |
-| 14 | **原型代码（真正被改的那份）** | 新增页面 + 更新 `pages` 数组 + **逐页检查文案/数据/状态是否与 PRD 描述一致（参照 3.6 节）**。**§3.9 铁律 1：PRD 一改，原型代码必须同批真实改掉**——不许只改 PRD、代码留到下一轮。**并且不许顺手塞进"评审专用"内容（§3.10）**：免责横幅、导航栏评审标签、评审专用样式/脚本一律不加 |
+| 14 | **原型代码（真正被改的那份）** | 新增页面 + 更新 `pages` 数组 + **逐页检查文案/数据/状态是否与 PRD 描述一致（参照 3.6 节）**。**§3.9 铁律 1：PRD 一改，原型代码必须同批真实改掉**——不许只改 PRD、代码留到下一轮。**并且不许顺手塞进"评审专用"内容（§3.10）**：免责横幅、导航栏评审标签、评审专用样式/脚本一律不加；**也不许给交互原型加本流程的导航外壳（§2.10 ⑦ / §3.8）** |
 | 14.1 | **原型截图（`原型截图/*.png`）** | **§3.9 铁律 2/3：原型代码改完必须重渲染出图**，且 `原型截图/*.png` 的 mtime 必须 ≥ 对应原型代码的 mtime。**改了代码没重出图 = 图陈旧 = 交付不合格**；图与代码不是同一次渲染的产物，评审时就会分叉 |
 | 15 | PRD 双栏预览下拉项 + 三级滚动联动 + 复制出图 | 新增页的 `CATALOG` 项 / `#pageSelect` option，并给详细方案对应 `<tr>` 补 `data-preview=<page-id>`；**该行是"点 X 之后的状态"就同时补 `data-preview-state`，"看点是某个元素"就补 `data-preview-focus`（§2.6 ⑧ 三级同步）**；**新增/改名的 state/focus 必须同时进原型注册表（§3.4.3），两边 key 对不上就等于没写**；**并确认该页能被 `/api/snapshot` 取到图**（起服务后点一次「一键复制全文」，看 toast 有没有报"生成失败"），否则复制出去会缺这张原型（见 §2.8） |
 | 16 | PRD 的页面映射（如 `pageAliases`、端侧页面集合、预览状态） | 新增页或删除端侧时需同步 |
 | 17 | 正文末尾「待后续确认的产品口径」清单 | 本次新产生的"待确认"要加进去；本次已确认关闭的条目改为「已确认：xxx」（不删除） |
 | 18 | 交付前 | 重跑 `validate_prd.py`（§5.2），确认改动没有打破表头/分块/data-preview/编号连续性；**再按 §3.9 自证**：报出本次真实改动的原型代码（路径 + mtime）、图 ↔ 代码对应条数、图 mtime ≥ 代码 mtime 的核对结果 |
+| 19 | **PRD 顶栏六导航 / 登录门禁 / 改动记录（§2.10）** | 新增端或新增产出物时：`PM_LINKS` 的 `gallery` / `prototype` 两个目标路径要跟着改（没产的置灰而不是留死链）；**静态图册页的顶栏与标题栏必须跟着 PRD 页一起改**（两页是一套外壳）；`PM_LINKS` 指向的交互原型若换了文件，同步改路径。**改完实测一遍游客态与登录态**（§5.2 对应两条） |
 
 > **裁剪章节的处理：** 上表第 4/4.1/5/6/10/11/12/13 项对应的章节可能在初稿时已按 2.2 裁掉。遍历到这些位置时：
 > - 该章节**当前存在** → 按上表正常同步。

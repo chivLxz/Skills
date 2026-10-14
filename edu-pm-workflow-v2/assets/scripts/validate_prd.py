@@ -506,6 +506,128 @@ def validate_surface(prd_path):
     return {"errors": errors, "stats": {"files": len(files)}}
 
 
+# §2.10：顶栏六个固定导航。**顺序也是约定的一部分**（双栏预览 / 编辑 / 撤销 / 保存 / 交互原型 / 静态图册）。
+TOPBAR_NAV_ORDER = ["dual-pane", "edit", "undo", "save", "prototype", "gallery"]
+NAV_LABEL = {"dual-pane": "双栏预览", "edit": "编辑", "undo": "撤销",
+             "save": "保存", "prototype": "交互原型", "gallery": "静态图册"}
+
+
+def _pm_navs(text):
+    """按出现顺序取 `data-pm-nav` 的取值。"""
+    return re.findall(r'data-pm-nav\s*=\s*["\']([^"\']+)["\']', text)
+
+
+def _pm_tb_text(text):
+    """标题栏三段文案（mark / name / ver），用来核对图册页与 PRD 页是否统一。"""
+    return [re.sub(r"\s+", " ", t).strip() for t in
+            re.findall(r'class\s*=\s*["\'][^"\']*\btb-(?:mark|name|ver)\b[^"\']*["\'][^>]*>([^<]*)<', text)]
+
+
+def _pm_links(prd_path, text):
+    """尽力解出 `window.PM_LINKS = { gallery:'…', prototype:'…' }`，并以 PRD 所在目录为基准转成路径。"""
+    block = re.search(r"PM_LINKS\s*=\s*\{(.*?)\}", text, re.S)
+    if not block:
+        return {}
+    out = {}
+    for key, val in re.findall(r"(gallery|prototype)\s*:\s*[\"']([^\"']*)[\"']", block.group(1)):
+        val = val.strip()
+        if not val:
+            continue
+        p = (prd_path.parent / val.split("#")[0].split("?")[0]).resolve()
+        out[key] = p
+    return out
+
+
+def validate_topbar(prd_path):
+    """§2.10：PRD 顶栏六个固定导航 + 编辑门禁外壳 + 图册页统一 + 交互原型页无导航。
+
+    能机械判定的只有"外壳在不在、结构对不对"这一层：
+      * 六个 `data-pm-nav` 齐不齐、顺序对不对、顶栏在不在 `#prdContent` 之外；
+      * 有没有残留的右下角 `.fab-group` / `.save-btn-container`（会出现两个保存按钮）；
+      * 静态图册页的导航与标题栏是否与 PRD 页逐项一致；
+      * 交互原型页有没有被加上我方顶栏；项目里有没有残留 `*-prototype-flow.html` 薄外壳。
+
+    **"游客态是不是真的一个 contenteditable 都没挂""保存后记录四列是不是都填上了"要人工实测**
+    （见 §5.2 对应两条）——那需要跑浏览器，脚本这一层做不到。
+    """
+    errors = []
+    text = prd_path.read_text(encoding="utf-8")
+    navs = _pm_navs(text)
+
+    # ① 六个导航
+    if not navs:
+        errors.append("PRD 里没有找到顶栏导航（data-pm-nav）——v2.5 起每份 PRD 都要有右上角六个固定入口（§2.10 ①）")
+    elif navs != TOPBAR_NAV_ORDER:
+        missing = [n for n in TOPBAR_NAV_ORDER if n not in navs]
+        extra = [n for n in navs if n not in TOPBAR_NAV_ORDER]
+        detail = []
+        if missing:
+            detail.append("缺：" + "、".join(NAV_LABEL[n] for n in missing))
+        if extra:
+            detail.append("多出：" + "、".join(extra))
+        if not detail:
+            detail.append("顺序是 " + " → ".join(navs))
+        errors.append("顶栏六个导航不齐或顺序不对（§2.10 ①）：%s；应为 %s"
+                      % ("；".join(detail), " → ".join(NAV_LABEL[n] for n in TOPBAR_NAV_ORDER)))
+
+    # ② 顶栏必须在 #prdContent 之外
+    m_top = re.search(r'data-pm-topbar\s*=', text)
+    m_main = re.search(r'id\s*=\s*["\']prdContent["\']', text)
+    if m_top and m_main and m_top.start() > m_main.start():
+        errors.append("顶栏出现在 #prdContent 之内——它会被「一键复制全文」一起复制出去，"
+                      "必须放在 <body> 下、#prdContent 之前（§2.10 ⑤）")
+
+    # ③ 不许残留右下角悬浮区（v2.5 起动作入口全部收口到顶栏）
+    for cls, label in (("fab-group", "双栏预览/保存悬浮组"), ("save-btn-container", "保存按钮容器")):
+        if re.search(r'class\s*=\s*["\'][^"\']*\b%s\b' % cls, text):
+            errors.append("页面里仍残留 `.%s`（%s）——v2.5 起这两个动作已并入顶栏，"
+                          "留着会出现两个保存按钮且状态不同步（§2.10 ⑤）" % (cls, label))
+
+
+    # ④ 静态图册页：导航与标题栏必须与 PRD 页逐项一致
+    links = _pm_links(prd_path, text)
+    stats = {"navs": len(navs), "gallery": 0, "prototype": 0}
+    gallery = links.get("gallery")
+    if gallery is not None:
+        if not gallery.is_file():
+            errors.append("顶栏「静态图册」指向的文件不存在：%s（要么补上，要么把这个入口去掉，"
+                          "不要留死链——§2.10 ①）" % gallery)
+        else:
+            gtext = gallery.read_text(encoding="utf-8", errors="ignore")
+            gnavs = _pm_navs(gtext)
+            stats["gallery"] = 1
+            if gnavs != navs:
+                errors.append("静态图册页的顶栏导航与 PRD 页不一致（§2.10 ⑥）：%s；PRD 页是 %s"
+                              % (" → ".join(gnavs) or "（没有顶栏）", " → ".join(navs)))
+            if _pm_tb_text(gtext) != _pm_tb_text(text) and _pm_tb_text(text):
+                errors.append("静态图册页的标题栏文案与 PRD 页不一致（§2.10 ⑥）：%s；PRD 页是 %s"
+                              % (_pm_tb_text(gtext) or "（没有标题栏）", _pm_tb_text(text)))
+
+    # ⑤ 交互原型页：不许加本流程的导航外壳
+    proto = links.get("prototype")
+    if proto is not None:
+        if not proto.is_file():
+            errors.append("顶栏「交互原型」指向的文件不存在：%s（没产出就把该入口去掉或置灰，§2.10 ①）" % proto)
+        else:
+            ptext = proto.read_text(encoding="utf-8", errors="ignore")
+            stats["prototype"] = 1
+            if re.search(r'data-pm-topbar\s*=', ptext) or _pm_navs(ptext):
+                errors.append("交互原型页 %s 里出现了本流程的顶栏（data-pm-topbar / data-pm-nav）"
+                              "——按 §2.10 ⑦ 它要保持原功能代码的展示，不加导航" % proto.name)
+
+    # ⑥ 薄外壳（v2.5 明令不许）
+    demand_dir = prd_path.parent.parent
+    try:
+        shells = sorted(p.name for p in demand_dir.rglob("*prototype-flow*.html"))
+    except OSError:
+        shells = []
+    if shells:
+        errors.append("发现「可交互原型薄外壳」文件：%s ——v2.5 起不许单独写 -prototype-flow.html，"
+                      "直接在宿主代码上改（§3.8 / §2.10 ⑦）" % "、".join(shells[:3]))
+
+    return {"errors": errors, "stats": stats}
+
+
 def main(argv):
     if len(argv) > 1:
         files = [Path(p) for p in argv[1:]]
@@ -534,6 +656,10 @@ def main(argv):
             if surface["errors"]:
                 raise ValueError("原型「评审专用」内容检查未通过（§3.10）：\n"
                                  + "\n".join(dict.fromkeys(surface["errors"])))
+            topbar = validate_topbar(path)
+            if topbar["errors"]:
+                raise ValueError("顶栏 / 登录门禁检查未通过（§2.10）：\n"
+                                 + "\n".join(dict.fromkeys(topbar["errors"])))
             line = "PASS  " + str(path)
             s = sync["stats"]
             if s:
@@ -542,6 +668,11 @@ def main(argv):
             if surface["stats"]["files"]:
                 line += ("\n      [原型洁净度] 扫描 %d 个原型文件，未发现「评审专用」内容（§3.10）"
                          % surface["stats"]["files"])
+            t = topbar["stats"]
+            if t.get("navs"):
+                line += ("\n      [顶栏门禁] %d 个固定导航齐全；静态图册 %s / 交互原型 %s（§2.10）"
+                         % (t["navs"], "已核对" if t.get("gallery") else "未引用",
+                            "已核对（未加导航）" if t.get("prototype") else "未引用"))
             print(line)
         except ValueError as exc:
             failed += 1

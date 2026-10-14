@@ -36,8 +36,10 @@ from urllib.parse import quote, unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pm_bootstrap import launch_engine  # noqa: E402
-from pm_runtime import (VERSION, atomic_write, cors_response_origin, ensure_config,  # noqa: E402
-                        origin_allowed, probe_health, reroll_ports, valid_token)
+from pm_runtime import (SESSION_HEADER, VERSION, add_user, atomic_write, authenticate,  # noqa: E402
+                        cors_response_origin, ensure_config, load_users, make_session,
+                        origin_allowed, probe_health, public_user, remove_user, reroll_ports,
+                        users_path, valid_token, verify_password)
 
 
 PROJECT_DIR = Path(os.environ.get("PROTOTYPE_PROJECT_DIR")
@@ -73,6 +75,12 @@ ASSET_MAX_BYTES = 12 * 1024 * 1024
 
 # 允许浏览器内编辑写回的产物子目录名（任意需求目录下的这些子目录，或项目根下的同名旧目录）
 WRITABLE_SUBDIR_NAMES = {"原型", "流程图", "需求文档", "需求挖掘", "验收清单", "数据分析"}
+
+# 改动记录的落盘位置：跟着「可写产物子目录」走，与 PRD 同级的一个点号文件。
+# 用它而不是把记录写进 PRD 正文，是为了让 §2.8「一键复制全文」抓 #prdContent 时
+# 天然带不走这些机器元数据（正文要保持是给人读的）。
+CHANGE_LOG_NAME = ".pm-change-log.json"
+CHANGE_LOG_MAX = 500
 
 
 async def _open_browser_engine(playwright):
@@ -465,6 +473,69 @@ def _resolve_writable_html_path(raw_path):
 
 def _atomic_write_text(path, content):
     atomic_write(path, content)
+
+
+# ── 改动记录（谁在什么时候改了 PRD 的哪一处）──────────────────────────────
+# 记录跟 PRD 同目录、同需求一份：`[需求名]/需求文档/.pm-change-log.json`。
+# 之所以服务端存一份、而不是只靠页面内的内存数组：
+#   1. 保存可能发生在多台机器 / 多个浏览器上，页内数组各记各的，合起来才是全量；
+#   2. 服务端知道真实的 updated_by（从会话解出），不采信前端自报的名字。
+def _change_log_path(html_path):
+    return Path(html_path).parent / CHANGE_LOG_NAME
+
+
+def _read_change_log(html_path):
+    path = _change_log_path(html_path)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    entries = data.get("entries") if isinstance(data, dict) else data
+    return entries if isinstance(entries, list) else []
+
+
+def _append_change_log(html_path, user, summary, revision, kind="save", where=""):
+    """追加一条记录并落盘，返回新增的那条。任何 IO 失败都不阻断保存本身。"""
+    entry = {
+        "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "by": user.get("name") or user.get("username"),
+        "username": user.get("username"),
+        "kind": kind,
+        "where": _strip_markup(where) or "整篇",
+        "summary": _strip_markup(summary) or ("保存整篇" if kind == "save" else kind),
+        "revision": (revision or "")[:12],
+    }
+    try:
+        entries = _read_change_log(html_path) + [entry]
+        entries = entries[-CHANGE_LOG_MAX:]
+        _atomic_write_text(_change_log_path(html_path),
+                           json.dumps({"entries": entries}, ensure_ascii=False, indent=2))
+    except OSError:
+        pass
+    return entry
+
+
+_CHANGE_LOG_BLOCK_RE = re.compile(
+    r'<script\b[^>]*\bid=["\']pm-change-log["\'][^>]*>.*?</script>', re.I | re.S)
+
+
+def _inject_change_log(content, entries):
+    """把改动记录嵌成 `<script type="application/json" id="pm-change-log">`。
+
+    选这个载体有三个原因：
+      1. 它在 `<body>` 末尾、**不在 `#prdContent` 里**，所以 §2.8「一键复制全文」抓正文时
+         天然带不走——正文要保持是给人读的，机器元数据不该混进粘贴结果；
+      2. 它是 DOM 的一部分，§2.4 的保存抓 `outerHTML` 时本就会带上，无需额外存储；
+      3. 纯 JSON 载荷，页面渲染「修改记录」浮层时 `JSON.parse` 即用，不必解析 HTML。
+    """
+    payload = json.dumps({"entries": entries or []}, ensure_ascii=False)
+    payload = payload.replace("<", "\\u003c")      # 防止内容里的 </script> 提前闭合脚本块
+    block = '<script type="application/json" id="pm-change-log">' + payload + "</script>"
+    if _CHANGE_LOG_BLOCK_RE.search(content):
+        return _CHANGE_LOG_BLOCK_RE.sub(lambda _m: block, content, count=1)
+    if re.search(r"</body\s*>", content, re.I):
+        return re.sub(r"</body\s*>", block + "\n</body>", content, count=1, flags=re.I)
+    return content + "\n" + block
 
 
 def _feature_name(html_path):
@@ -972,7 +1043,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", cors_response_origin(origin))
         self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-PM-Token, X-PM-Project")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-PM-Token, X-PM-Project, " + SESSION_HEADER)
         self.send_header("Cache-Control", "no-store")
 
     def _authorized(self):
@@ -1002,6 +1073,13 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(self.path.split("?", 1)[0])
         if path == "/api/health":
             self._json({"project_id": CONFIG["project_id"], "version": VERSION, "read_only": READ_ONLY})
+        elif path == "/api/me":
+            self._handle_me()
+        elif path == "/api/change-log":
+            if READ_ONLY or not self._authorized():
+                self._json({"error": "项目身份校验失败"}, 403)
+                return
+            self._handle_change_log()
         elif path == "/api/status":
             if READ_ONLY or not self._authorized():
                 self._json({"error": "项目身份校验失败"}, 403)
@@ -1011,10 +1089,21 @@ class Handler(BaseHTTPRequestHandler):
             self._serve_file(path)
 
     def do_POST(self):
+        path = unquote(self.path.split("?", 1)[0])
+        # 登录/登出是唯一两条「还没有会话也要能打」的写接口，所以要先于统一鉴权分派。
+        # 它们仍然过 _authorized()（Host + Origin + 项目 token），只是不要求会话。
+        if path == "/api/login":
+            if READ_ONLY or not self._authorized():
+                self._json({"ok": False, "error": "只读模式或项目身份校验失败"}, 403)
+                return
+            self._handle_login()
+            return
+        if path == "/api/logout":
+            self._json({"ok": True})          # 会话是无状态的；登出＝前端丢掉那个串
+            return
         if READ_ONLY or not self._authorized():
             self._json({"error": "只读模式或项目身份校验失败"}, 403)
             return
-        path = unquote(self.path.split("?", 1)[0])
         if path == "/api/screenshot":
             self._handle_screenshot()
         elif path == "/api/snapshot":
@@ -1023,6 +1112,8 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_asset()
         elif path == "/api/save-html":
             self._handle_save_html()
+        elif path == "/api/change-log":
+            self._handle_change_log()
         elif path == "/api/revision":
             try:
                 target = _resolve_writable_html_path(self._read_json_body().get("path"))
@@ -1031,6 +1122,70 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": str(error)}, 400)
         else:
             self._json({"error": "not found"}, 404)
+
+    # ── 登录与会话 ──────────────────────────────────────────────────────
+    def _handle_me(self):
+        """当前身份。前端顶栏靠它决定「编辑/撤销/保存」是可用还是置灰。"""
+        users = load_users(PROJECT_DIR).get("users", [])
+        user = authenticate(PROJECT_DIR, CONFIG, self.headers)
+        self._json({
+            "ok": True,
+            "auth": bool(user),
+            "user": public_user(user) if user else None,
+            "editing_enabled": bool(users),
+            "read_only": READ_ONLY,
+        })
+
+    def _handle_login(self):
+        try:
+            payload = self._read_json_body()
+        except Exception as error:
+            self._json({"ok": False, "error": str(error)}, 400)
+            return
+        username = str(payload.get("username") or "").strip()
+        password = str(payload.get("password") or "")
+        users = load_users(PROJECT_DIR).get("users", [])
+        if not users:
+            self._json({"ok": False, "error": "尚未创建编辑账号。在项目目录执行 "
+                                               "py -3 scripts\\start_service.py --add-user 张三"
+                                               "（macOS：python3 scripts/start_service.py --add-user 张三）"}, 428)
+            return
+        record = next((u for u in users if u.get("username") == username), None)
+        # 用户不存在也走一遍散列比较，避免用响应快慢把「哪些账号存在」探出来
+        if not record or not verify_password(password, record.get("password")):
+            self._json({"ok": False, "error": "用户名或口令不正确"}, 401)
+            return
+        if record.get("role") == "viewer":
+            self._json({"ok": False, "error": "该账号只有查看权限，不能编辑"}, 403)
+            return
+        self._json({"ok": True, "session": make_session(CONFIG, record["username"]),
+                    "user": public_user(record)})
+
+    # ── 改动记录 ────────────────────────────────────────────────────────
+    def _handle_change_log(self):
+        try:
+            if self.command == "GET":
+                query = self.path.split("?", 1)[1] if "?" in self.path else ""
+                payload = {"path": unquote(dict(
+                    part.split("=", 1) for part in query.split("&") if "=" in part).get("path", ""))}
+            else:
+                payload = self._read_json_body()
+            target = _resolve_writable_html_path(payload.get("path"))
+        except Exception as error:
+            self._json({"ok": False, "error": str(error)}, 400)
+            return
+        if self.command == "GET":
+            self._json({"ok": True, "entries": _read_change_log(target)})
+            return
+        user = authenticate(PROJECT_DIR, CONFIG, self.headers)
+        if not user:
+            self._json({"ok": False, "error": "请先登录后再记录改动"}, 401)
+            return
+        entries = payload.get("entries") if isinstance(payload.get("entries"), list) else [payload]
+        added = [_append_change_log(target, user, e.get("summary"), e.get("revision"),
+                                    e.get("kind") or "edit", e.get("where"))
+                 for e in entries if isinstance(e, dict)]
+        self._json({"ok": True, "added": added})
 
     def _read_json_body(self):
         length = int(self.headers.get("Content-Length") or 0)
@@ -1164,6 +1319,19 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def _handle_save_html(self):
+        # 编辑门禁：v2.5 起保存必须带有效会话（§2.10）。校验放在 resolve 之前，
+        # 免得一个未登录请求也能靠报错文案把目录结构探出来。
+        user = authenticate(PROJECT_DIR, CONFIG, self.headers)
+        if user is None:
+            configured = bool(load_users(PROJECT_DIR).get("users"))
+            self._json({"ok": False, "error": "请先登录后再保存" if configured
+                        else "尚未创建编辑账号，无法保存。在项目目录执行 "
+                             "py -3 scripts\\start_service.py --add-user 张三"},
+                       401 if configured else 428)
+            return
+        if user.get("role") == "viewer":
+            self._json({"ok": False, "error": "该账号只有查看权限，不能保存"}, 403)
+            return
         try:
             payload = self._read_json_body()
             html_path = _resolve_writable_html_path(payload.get("path") or payload.get("html") or payload.get("url"))
@@ -1178,6 +1346,11 @@ class Handler(BaseHTTPRequestHandler):
                 if payload.get("revision") != current_revision:
                     self._json({"ok": False, "error": "文件已变化或缺少版本，请重新加载后合并修改"}, 409)
                     return
+                # 改动记录随文件走：把它作为机器可读块写进 HTML 尾部，
+                # 这样 PRD 被拷到内网、导出服务连不上时，右上角的修改记录照样能显示。
+                entry = _append_change_log(html_path, user, payload.get("summary"), current_revision,
+                                           "save", payload.get("where"))
+                content = _inject_change_log(content, _read_change_log(html_path))
                 backup = PROJECT_DIR / ".handoff/html-backups" / uuid.uuid4().hex / html_path.name
                 backup.parent.mkdir(parents=True, exist_ok=True)
                 backup.write_bytes(raw)
@@ -1192,6 +1365,8 @@ class Handler(BaseHTTPRequestHandler):
             "revision": hashlib.sha256(content.encode("utf-8")).hexdigest(),
             "backup": str(backup.relative_to(PROJECT_DIR)),
             "bytes": len(content.encode("utf-8")),
+            "updated_by": user.get("name") or user.get("username"),
+            "change": entry,
             "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         })
 

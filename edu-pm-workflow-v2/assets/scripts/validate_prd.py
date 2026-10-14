@@ -10,7 +10,9 @@
 
 校验的是「机械可判定」的部分：章节独立性、固定表头与列数、
 埋点命名、描述列分块与逐条换行、data-preview 覆盖、
-文档级 style 位置、章节编号连续性、原型图的溯源与新鲜度（§3.9）。
+文档级 style 位置、章节编号连续性、
+原型图的溯源与新鲜度（§3.9）、滚动联动的级别（§2.6 ⑧ / §3.4.3）、
+原型里有没有「评审专用」内容（§3.10）。
 视觉类检查（遮挡、字号、配色统一）仍需人工按 §4.3 / §4.6 核对。
 """
 import sys
@@ -335,6 +337,36 @@ def _registry_keys(proto_html):
     return {"states": states, "focus": focus}
 
 
+def _prototype_files(prd_path, text):
+    """尽力解析出这份 PRD 引用的**原型 HTML 的本地路径**（§3.4.3 / §3.10 共用）。
+
+    认三种写法：`PRD_REPO` 常量拼出的绝对路径、`CATALOG.url` / `XXX_DIR` 之类前缀、
+    以及 PRD 里出现的任意 `*.html` 字符串字面量。解析不出来就返回空列表——
+    调用方一律**跳过、不报错**，避免在"原型在别的盘 / 整份 PRD 全用 iframe"时制造假阳性。
+    """
+    from urllib.parse import unquote
+    bases = [prd_path.parent, prd_path.parent.parent, Path.cwd()]
+    prefixes = [unquote(m.group(2)) for m in
+                re.finditer(r"""(\w+)\s*=\s*['"]([^'"]*/)['"]""", text)]
+    for m in re.finditer(r"""PRD_REPO\s*=\s*['"]([^'"]+)['"]""", text):
+        rp = _resolve_local(m.group(1), bases)
+        if rp:
+            bases.insert(0, rp)
+
+    names = {unquote(n) for n in re.findall(r"""['"]([^'"]+\.html)['"]""", text)}
+    found = []
+    for n in sorted(names):
+        p = _resolve_local(n, bases)
+        if p is None:
+            for pre in prefixes:
+                p = _resolve_local(pre + n, bases)
+                if p is not None:
+                    break
+        if p is not None and p.is_file() and p != prd_path and p not in found:
+            found.append(p)
+    return found
+
+
 def validate_scroll_sync(prd_path):
     """§2.6 ⑧ / §3.4.3 里「机械可判定」的那部分：滚动联动到底做到第几级。
 
@@ -383,32 +415,8 @@ def validate_scroll_sync(prd_path):
              "states": len(used_states), "focus": len(used_focus), "registry": "未找到"}
 
     if used_states or used_focus:
-        from urllib.parse import unquote
-        bases = [prd_path.parent, prd_path.parent.parent, Path.cwd()]
-        prefixes = [m.group(2) for m in
-                    re.finditer(r"""(\w+)\s*=\s*['"]([^'"]*/)['"]""", text)]
-        prefixes = [unquote(p) for p in prefixes]
-        for m in re.finditer(r"""PRD_REPO\s*=\s*['"]([^'"]+)['"]""", text):
-            rp = _resolve_local(m.group(1), bases)
-            if rp:
-                bases.insert(0, rp)
-
-        names = {unquote(n) for n in re.findall(r"""['"]([^'"]+\.html)['"]""", text)}
-        proto_files = {}
-        for n in sorted(names):
-            p = _resolve_local(n, bases)
-            if p and p.is_file():
-                proto_files[p] = True
-                continue
-            for pre in prefixes:
-                p = _resolve_local(pre + n, bases)
-                if p and p.is_file():
-                    proto_files[p] = True
-                    break
         found = {}
-        for p in proto_files:
-            if p == prd_path:
-                continue
+        for p in _prototype_files(prd_path, text):
             try:
                 reg = _registry_keys(p.read_text(encoding="utf-8", errors="ignore"))
             except OSError:
@@ -429,6 +437,73 @@ def validate_scroll_sync(prd_path):
                 "PRD 用了 data-preview-state / -focus，但解析不到任何原型注册表（#pm-preview-registry）"
                 "——无法确认这些 key 真实存在，滚动联动可能静默失效（§3.4.3）")
     return {"errors": errors, "stats": stats}
+
+
+# §3.10：「评审专用」内容的字样。只收**无歧义**的——出现即说明原型在自我声明"这是假数据/仅供参考"。
+REVIEW_MARKERS = [
+    "非客户真实使用", "用于产品评审", "仅供评审", "评审专用", "交互评审",
+    "此原型", "本原型", "演示数据",
+]
+
+
+def _strip_comments(src):
+    """去掉 HTML / JS / CSS 注释，只留下**真正会被渲染或被执行**的文本。
+
+    「演示数据」这类词写在注释里是合法用法（实测：`/* 首次进入时的演示数据。真实环境由服务端下发。 */`），
+    只有出现在会被渲染出来的字符串里才算「评审专用内容」。
+    替换成等量换行，保证报出来的行号仍对应原文件。
+    """
+    src = re.sub(r"<!--.*?-->", lambda m: "\n" * m.group(0).count("\n"), src, flags=re.S)
+    src = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), src, flags=re.S)
+    src = re.sub(r"(?m)^[ \t]*//.*$", "", src)
+    return src
+
+
+def _surface_files(prd_path, text):
+    """§3.10 要扫的文件集合 = 原型 HTML 本身 + 它们**本地**引用的脚本 / 样式表。
+
+    反例里的「演示数据」横幅是宿主页 `ResourcePanel.html` 引的 `resource-panel.js` 注入的——
+    只扫 HTML 会漏掉，所以要把 `<script src>` / `<link rel=stylesheet href>` 里能解析成本地
+    文件的一并纳入（远程 CDN / `data:` 一律跳过，`?v=…` 这类缓存串先剥掉）。
+    """
+    out = list(_prototype_files(prd_path, text))
+    for html in list(out):
+        try:
+            src = html.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        refs = re.findall(r'<script[^>]*\bsrc=["\']([^"\']+)["\']', src, re.I)
+        refs += re.findall(r'<link[^>]*\bhref=["\']([^"\']+)["\']', src, re.I)
+        for r in refs:
+            p = _resolve_local(r.split("?")[0], [html.parent])
+            if p is not None and p.is_file() and p not in out:
+                out.append(p)
+    return out
+
+
+def validate_surface(prd_path):
+    """§3.10：原型里不许出现「评审专用」内容（免责横幅 / 角标 / 导航栏评审标签 …）。
+
+    做法：解析出本次的原型 HTML 及其本地引用的脚本/样式（见 `_surface_files`），
+    **去掉注释后**逐行扫 REVIEW_MARKERS，命中就报「文件:行号 + 命中词」，让人能直接定位到那行代码。
+
+    只扫得到"写死在原型里的字样"这一层；"某个元素虽然不叫演示数据、但产品上线后根本不会有"
+    这类仍需人工按 §3.10 的 30 秒自检逐屏过。解析不出原型文件时一律跳过。
+    """
+    errors = []
+    files = _surface_files(prd_path, prd_path.read_text(encoding="utf-8"))
+    for p in files:
+        try:
+            raw = p.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for lineno, line in enumerate(_strip_comments(raw).splitlines(), 1):
+            hit = next((mk for mk in REVIEW_MARKERS if mk in line), None)
+            if hit:
+                errors.append("原型里出现「评审专用」内容：%s:%d 命中「%s」"
+                              "——产品真上线后不会出现的东西不要写进原型（§3.10）"
+                              % (p.name, lineno, hit))
+    return {"errors": errors, "stats": {"files": len(files)}}
 
 
 def main(argv):
@@ -455,11 +530,18 @@ def main(argv):
             if sync["errors"]:
                 raise ValueError("滚动联动检查未通过（§2.6 ⑧ / §3.4.3）：\n"
                                  + "\n".join(dict.fromkeys(sync["errors"])))
+            surface = validate_surface(path)
+            if surface["errors"]:
+                raise ValueError("原型「评审专用」内容检查未通过（§3.10）：\n"
+                                 + "\n".join(dict.fromkeys(surface["errors"])))
             line = "PASS  " + str(path)
             s = sync["stats"]
             if s:
                 line += ("\n      [滚动联动] %d 行 / %d 页 / state %d 个 / focus %d 个 / 注册表：%s"
                          % (s["rows"], s["pages"], s["states"], s["focus"], s["registry"]))
+            if surface["stats"]["files"]:
+                line += ("\n      [原型洁净度] 扫描 %d 个原型文件，未发现「评审专用」内容（§3.10）"
+                         % surface["stats"]["files"])
             print(line)
         except ValueError as exc:
             failed += 1

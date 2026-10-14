@@ -9,6 +9,8 @@
   --add-user   创建/重置 PRD 编辑账号（不启动服务）
   --list-users 列出已配置的编辑账号
   --remove-user 删除账号
+  --lan        按内网托管启动（同事可访问，编辑仍需登录）
+  --host IP    指定监听地址；--host 127.0.0.1 可改回只有本机可访问
 """
 import argparse
 import getpass
@@ -18,9 +20,10 @@ import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pm_bootstrap import doctor, ensure_runtime, ensure_serving  # noqa: E402
-from pm_runtime import (add_user, ensure_config, load_users,  # noqa: E402
-                        remove_user, users_path)
+from pm_bootstrap import doctor, ensure_runtime, ensure_serving, reachable_url  # noqa: E402
+from pm_runtime import (add_user, config_host, ensure_config, is_lan_host,  # noqa: E402
+                        load_users, remove_user, require_editor_account_for_lan,
+                        save_config, users_path)
 
 ROOT = Path(os.environ.get("PROTOTYPE_PROJECT_DIR")
             or Path(__file__).resolve().parent.parent).resolve()
@@ -49,7 +52,9 @@ def main():
     parser.add_argument("--background", action="store_true", help="脱离终端在后台启动")
     parser.add_argument("--open-browser", action="store_true", help="启动后打开首个原型页")
     parser.add_argument("--read-only", action="store_true")
-    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--host", help="监听地址；默认读 runtime.json（初始 127.0.0.1）")
+    parser.add_argument("--lan", action="store_true",
+                        help="按内网托管启动（等价 --host 0.0.0.0，同事可访问）")
     parser.add_argument("--no-download", action="store_true",
                         help="不允许下载 Chromium（没有可复用的系统浏览器时直接报错）")
     parser.add_argument("--add-user", metavar="用户名", help="创建/重置编辑账号后退出")
@@ -107,11 +112,24 @@ def main():
         parser.print_help()
         return 0
 
+    # 监听地址：--lan 是 --host 0.0.0.0 的友好写法。写进 runtime.json，双击入口
+    # 脚本起的服务也就跟着是内网可访问的，不用每次带参数。
+    host = "0.0.0.0" if args.lan else args.host
+    if host:
+        # 先校验再落配置：否则会先打印「已设为内网」紧接着报错，读起来像自相矛盾。
+        require_editor_account_for_lan(ROOT, host, args.read_only)
+        config = ensure_config(ROOT)
+        if config.get("host") != host:
+            config["host"] = host
+            save_config(ROOT, config)
+        scope = "内网可访问（编辑仍需登录）" if is_lan_host(host) else "只有本机能访问"
+        print(f"✅ 监听地址已设为 {host} —— {scope}")
+
     result, config = ensure_serving(
-        ROOT, background=args.background, read_only=args.read_only, host=args.host,
+        ROOT, background=args.background, read_only=args.read_only, host=host,
         open_browser=args.open_browser, allow_download=not args.no_download)
     if args.background and result == "launched":
-        print(f"✅ 服务已在后台启动：http://127.0.0.1:{config['port']}")
+        print(f"✅ 服务已在后台启动：{reachable_url(host or config_host(config), config['port'])}")
     return result if isinstance(result, int) else 0
 
 

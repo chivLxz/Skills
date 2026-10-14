@@ -1146,20 +1146,37 @@ PRD 里的图有两种来源，**都得处理**，只处理 iframe 是不够的�
 
 ---
 
-### 2.9 内网（http · 不安全上下文）下的真实边界（必须如实告知用户，不许含糊）
+### 2.9 内网托管与不安全上下文下的真实边界（v2.6 重写 · 必须如实告知用户）
 
 PRD HTML 会被推到公司内网供多人浏览。内网是 `http://` 非 localhost，属**不安全上下文**——`navigator.clipboard`、`ClipboardItem`、`showSaveFilePicker` 一律不存在。不要按"我本机点着好使"就当功能可用。
 
-| 能力 | 作者本机（`file://` 或 `http://127.0.0.1:端口`，服务在跑） | 内网访客（`http://` 非 localhost） |
+**v2.6 起，"内网"分成两件完全不同的事，别再混着讲：**
+
+| 形态 | 怎么来的 | 一句话 |
 |---|---|---|
-| 顶栏「编辑 / 保存」（§2.10） | ✅ 登录后可用，服务端物理覆写文件 | 🚫 **置灰**——导出服务只在作者本机 `127.0.0.1`，访客机器上连不上 → `/api/me` 返回游客态 → 整站只读（**这正是"游客仅可查看"的落地方式**） |
-| 「📋 一键复制全文」（§2.8） | ✅ | ✅ 但 `navigator.clipboard` 在不安全上下文不存在，**必须有 `execCommand` 兜底**否则整个复制哑火 |
-| 原型取图（`/api/snapshot`、`/api/asset`） | ✅ | ⚠️ 同源限制同上——访客机器上没有导出服务，**取图会失败并如实降级为"纯文本复制（原型图缺失）"**，不许静默丢图 |
-| 双栏预览 / 交互原型 / 静态图册（§2.6 / §2.10 ①） | ✅ | ✅（都是纯前端 iframe / 跳转，不依赖服务） |
+| **甲 · 托管在作者机器上**（v2.6 新增） | 在项目目录执行 `python3 scripts/start_service.py --lan`（或 `--host 10.0.0.5`），服务绑内网 IP，把 `http://<那台机的内网IP>:端口/` 发出去 | 服务就在你机器上跑着，**同事打开的是"活的"页面**——能看、能登录、能编辑、图也是服务现渲染的 |
+| **乙 · 静态副本** | 把 `需求文档/*.html` + `原型/` + `原型截图/` 拷到公司的静态服务器/共享盘 | 没有服务，**整站只读**；这不叫"协作"，叫"发给别人看" |
 
-> **⚠️ v2.5 的口径变化（比 v2.4 更干净）：** v2.4 之前，内网访客点保存会走到 `showSaveFilePicker` 降级为"下载一份副本"——**那是假编辑**：他改的是一份下载到本地的副本，公司内网上的那份纹丝不动，而他自己以为改上去了。v2.5 起**访客就是游客**，保存按钮直接置灰，不会产生这种错觉。作者要在内网上改 PRD，就走正常流程：拉回本地 → 起服务 → 登录 → 改 → 保存 → 重新发布。
+| 能力 | 甲 · 作者本机打开 | 甲 · 内网同事打开（**托管那台机上的服务**） | 乙 · 无服务的静态副本 |
+|---|---|---|---|
+| 顶栏「编辑 / 保存」（§2.10） | ✅ 登录后可用 | ✅ **登录后同样可用**（v2.6 起）——他改的就是你磁盘上那份文件 | 🚫 **置灰**——`/api/me` 连不上 → 合成游客态 → 整站只读 |
+| 「重新出图」（§2.11） | ✅ 登录后可用 | ✅ 同上 | 🚫 置灰 |
+| 「📋 一键复制全文」（§2.8） | ✅ | ✅ 但 `navigator.clipboard` 在不安全上下文不存在，**必须有 `execCommand` 兜底**否则整个复制哑火 | ✅ 同上（这条不依赖服务，只依赖浏览器上下文） |
+| 原型取图（`/api/snapshot`、`/api/asset`） | ✅ | ✅ **走同源**（页面里前端自己把 `server` 切成 `location.origin`，§2.11 ④） | ⚠️ 取不到图，**如实降级为"纯文本复制（原型图缺失）"**，不许静默丢图 |
+| 双栏预览 / 交互原型 / 静态图册（§2.6 / §2.10 ①） | ✅ | ✅（纯前端 iframe / 跳转，不依赖服务） | ✅ |
 
-> **踩坑（v2.7 修正）：** 内网用 http 打开时 `location.pathname` 是**站点根路径**、磁盘上并不存在，导出服务旧版只按绝对路径解析发起页，导致 `/api/snapshot` 与 `/api/asset` 全返 400、「一键复制全文」**一张图都取不到**（toast 还只说"生成失败"）。服务端 `_resolve_base_html()` 必须**再按项目目录相对解一次**。
+> **⚠️ 口径变化史（每一版都是被一次真实误判逼出来的）：**
+> - **v2.4 及以前：** 内网访客点保存会走到 `showSaveFilePicker` 降级成"下载一份副本"——**那是假编辑**：他改的是下载到本地的副本，内网上那份纹丝不动，而他自己以为改上去了。
+> - **v2.5：** 一刀切成"内网访客就是游客"，保存直接置灰。这个口径**干净但过头**了——它把"服务在我机器上、同事只是从内网连过来"也一并禁掉了。于是 v2.5 里托管的唯一合法用法是 `--read-only`。
+> - **v2.6：** 改判。**能不能编辑，只取决于"这台浏览器能不能连到那个服务、并且有没有账号"，与"是不是那台机器本人"无关。** 所以 `--lan` 起来后同事能编辑；而**没有任何服务**的静态副本，才落回"游客只读"。**判据始终只有一条：能写文件才叫可编辑（§2.10 ②）。**
+
+> **⚠️ 甲形态的代价，必须写在交付说明里（别让用户事后才发现）：**
+> - **那台机器要一直开着**，关了就全体掉线（同事看到的是浏览器连不上）。
+> - **IP 会漂。** 内网 IP 通常是 DHCP 给的（Wi-Fi 尤其），换了 IP 旧链接立刻失效。要长期用就让网管给那台机绑一个固定 IP；页面上别写死 IP——链接是 PM 发给人的，写死在文档里等于埋雷。
+> - **同网段才连得上**：跨 VLAN / 走 VPN 的同事可能访问不了，这属于网络策略，不是产品能力。
+> - **服务端有编辑账号才能开可写托管**：`start_service.py --lan` 在没有任何编辑账号时会**直接报错并给出建号命令**，不会让你把一个"谁都编辑不了"的服务挂上去（那样比直接报错更难查）。
+
+> **踩坑（已在当前版本修正，但别改回去）：** 内网用 http 打开时 `location.pathname` 是**站点根路径**（`/需求名/需求文档/x.html`）、磁盘上并不存在。导出服务如果只按绝对路径解析发起页，`/api/snapshot` 与 `/api/asset` 会**全返 400**、「一键复制全文」**一张图都取不到**（toast 还只说"生成失败"）。所以服务端 `_resolve_base_html()` 必须**再按项目目录相对解一次**——服务端里那三处 `candidates.append(PROJECT_DIR / src_path.lstrip("/"))` 就是这条，别当冗余删掉。
 
 > 任何一档降级都要在 toast 里讲清楚丢了什么（§2.8 降级三档），不许静默失败。
 
@@ -1184,21 +1201,25 @@ PRD HTML 会被推到公司内网供多人浏览。内网是 `http://` 非 local
 
 > **「导出」不占导航位。** 用户要求里的"导出"就是 §2.8 的「📋 一键复制全文」——它**留在左下角不动**（顶栏是六个固定导航，硬塞第七个会破坏"固定"这个约定）。顶栏保持只有六个。
 
+> **v2.6：六个导航右侧多了一个 `.topbar-tools` 工具区**，里面放「重新出图」（§2.11）与用户胶囊 `.tb-user`。**它不是导航**：没有 `data-pm-nav`、不进上表、不参与"顺序不许改"的约定——**"导航"是给人来回跳的，"工具"是对当前文档做一次动作的**。中间那道竖线（`.topbar-tools { border-left }`）就是这条边界。别把工具按钮塞进 `.topbar-actions`，那会让上表看上去变成七个。
+
 #### ② 权限三态（编辑门禁的全部规则）
 
-| 状态 | 怎么进入 | 双栏预览 | 编辑 | 撤销 | 保存 | 交互原型 | 静态图册 |
-|---|---|---|---|---|---|---|---|
-| **游客** | 默认；或未登录；或**服务连不上**；或服务是 `PM_READ_ONLY=1` | ✅ 可用 | 显示「编辑」，点击弹登录框 | 🚫 置灰 | 🚫 置灰 | ✅ | ✅ |
-| **已登录 · 阅读态** | 登录成功，未点编辑 | ✅ | 显示「编辑」 | 🚫 | 🚫 | ✅ | ✅ |
-| **编辑中** | 点「编辑」 | 显示「收起预览」 | 显示「退出编辑」 | ✅ 有撤销栈时 | ✅ 有改动时高亮 | ✅ | ✅ |
+| 状态 | 怎么进入 | 双栏预览 | 编辑 | 撤销 | 保存 | 交互原型 | 静态图册 | 重新出图（§2.11） |
+|---|---|---|---|---|---|---|---|---|
+| **游客** | 默认；或未登录；或**服务连不上**；或服务是 `PM_READ_ONLY=1` | ✅ 可用 | 显示「编辑」，点击弹登录框 | 🚫 置灰 | 🚫 置灰 | ✅ | ✅ | 🚫 置灰，且**不显示角标** |
+| **已登录 · 阅读态** | 登录成功，未点编辑 | ✅ | 显示「编辑」 | 🚫 | 🚫 | ✅ | ✅ | ✅ 可用，有角标 |
+| **编辑中** | 点「编辑」 | 显示「收起预览」 | 显示「退出编辑」 | ✅ 有撤销栈时 | ✅ 有改动时高亮 | ✅ | ✅ | ✅ 可用，有角标 |
 
 > **判定口径只有一条：能写文件才叫"可编辑"。** 服务连不上、账号没配、`READ_ONLY`、角色是 `viewer`——**这四种全都落进"游客"那一行**，顶栏统一置灰，且 `contenteditable` 一个都不挂。**不许出现"页面能改、保存时才报错"**：那样用户已经改完一篇，才发现白改。
+
+> **⚠️ v2.6 改判（v2.5 那条"内网访客就是游客"作废）：** 能不能编辑**只取决于"这台浏览器能不能连到那个服务、并且有没有账号"**，与"是不是那台机器本人"无关。所以 §2.9 甲形态下（服务挂在作者机器上、绑内网 IP），**同事登录后同样能编辑**；只有**没有任何服务**的静态副本才落回游客只读。详见 §2.9 的口径变化史。
 
 > **游客态下 PRD 依然是一份完整可读的文档**——`§2.7` 的编辑模块照常 `init()`（用于表格手柄与 DOM 结构），但**不挂 `contenteditable`**；`PMEdit.lockEditable()` 负责这一步（见 ⑤）。
 
 #### ③ 登录门禁（本地导出服务内置账号）
 
-**为什么是本地账号而不是公司 SSO：** PRD 常在内网 `file://` / 裸 http 下打开，那里没有可信身份源；而这份文档本来就躺在 PM 自己机器的项目目录里，导出服务也只听 `127.0.0.1`。所以"谁改的"这件事以本机项目为界最实在。要换成 SSO 只改 `/api/login` 一处，前端契约不变。
+**为什么是本地账号而不是公司 SSO：** PRD 常在内网 `file://` / 裸 http 下打开，那里没有可信身份源；而这份文档本来就躺在 PM 自己机器的项目目录里，**服务也只在显式 `--lan` / `--host` 时才绑内网地址**（§2.9）。所以"谁改的"这件事以项目为界最实在。要换成 SSO 只改 `/api/login` 一处，前端契约不变。
 
 **账号表：`<项目根>/.pm-workflow/users.json`**（安装器写的 `.gitignore` 已包含 `/.pm-workflow/`，不会跟着产物提交）：
 
@@ -1269,8 +1290,14 @@ py -3 scripts\start_service.py --add-user 张三
     <button type="button" data-pm-nav="save"      id="navSave" disabled>保存</button>
     <button type="button" data-pm-nav="prototype" id="navPrototype">交互原型</button>
     <button type="button" data-pm-nav="gallery"   id="navGallery">静态图册</button>
-    <span class="tb-user" id="tbUser" hidden></span>
   </nav>
+  <!-- v2.6 右侧工具区。⚠️ 这里的「重新出图」**故意不带 data-pm-nav**：
+       上面那六个是"固定导航"，本区是"工具"，混进导航会让 §2.10 ① 的"不增不减"失守，
+       validate_prd.py 也会按 TOPBAR_NAV_ORDER 判你"多出一个"。 -->
+  <span class="topbar-tools">
+    <button type="button" id="navRefigure" hidden>重新出图</button>
+    <span class="tb-user" id="tbUser" hidden></span>
+  </span>
   <section class="changelog-panel" id="changelogPanel" hidden>
     <div class="cl-head">修改记录<span class="cl-sub" id="clSub"></span></div>
     <table class="cl-table">
@@ -1299,6 +1326,18 @@ py -3 scripts\start_service.py --add-user 张三
 .topbar-actions button.is-on { background:var(--pm-accent); border-color:var(--pm-accent); color:#fff; }
 .topbar-actions button.is-dirty { background:#fff7e6; border-color:#f0b429; color:#8a5a00; }
 .tb-user { font-size:12px; color:#5b5b8a; background:var(--pm-soft); border-radius:999px; padding:4px 11px; white-space:nowrap; }
+/* v2.6 右侧工具区（§2.11）：与六个固定导航之间用一道分隔线划清"工具 ≠ 导航" */
+.topbar-tools { display:flex; align-items:center; gap:8px; margin-left:12px; padding-left:12px;
+                border-left:1px solid var(--pm-line); }
+.topbar-tools button { font:inherit; font-size:13px; font-weight:600; color:#3b357a; background:#fff;
+                       border:1px solid #d8d4f0; border-radius:8px; padding:7px 13px; cursor:pointer;
+                       line-height:1.2; white-space:nowrap; }
+.topbar-tools button:hover:not(:disabled) { border-color:var(--pm-accent); color:var(--pm-accent); }
+.topbar-tools button:disabled { opacity:.42; cursor:not-allowed; }
+.topbar-tools button.is-stale { background:#fff7e6; border-color:#f0b429; color:#8a5a00; }
+.topbar-tools button.is-busy { opacity:.75; pointer-events:none; }
+/* 待更新的图：虚线琥珀描边。只做视觉提示，绝不改 src / 不换图 —— 换图只有服务端能保证正确。 */
+.proto-shot.pm-figure-stale { outline:2px dashed #f0b429; outline-offset:3px; }
 body.pm-editing .topbar { box-shadow:0 2px 14px rgba(91,91,214,.16); }
 /* 正文顶部留出顶栏高度；原 .doc-title 不再重复产品名 */
 body { padding-top:60px; }
@@ -1336,6 +1375,9 @@ body { padding-top:60px; }
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var nav = function (n) { return document.querySelector('[data-pm-nav="' + n + '"]'); };
   var S = { auth: false, user: null, configured: false, offline: false, editing: false, dirty: false };
+  // §2.11：本 PRD 里嵌的图与原型代码是否还对得上。「重新出图」按钮与角标都读它。
+  var fig = { stale: 0, total: 0, manual: 0, figures: [] };
+  var refiguring = false;
 
   function toast(msg, err) {
     var el = $('#pmTopbarToast');
@@ -1403,6 +1445,7 @@ body { padding-top:60px; }
     });
     var dp = nav('dual-pane');
     if (dp) dp.textContent = document.body.classList.contains('dual-pane') ? '收起预览' : '双栏预览';
+    renderRefigure();
   }
 
   /* ③ 登录框 */
@@ -1439,7 +1482,7 @@ body { padding-top:60px; }
     S.editing = !!on;
     lockEditable(!S.editing);
     if (window.PMEdit) { if (S.editing) window.PMEdit.init(document); }
-    if (S.editing) loadChangeLog();
+    if (S.editing) { loadChangeLog(); loadFigureStatus(); }
     render();
   }
 
@@ -1518,7 +1561,120 @@ body { padding-top:60px; }
     } finally { if (btn) btn.disabled = !S.editing; }
   }
 
-  /* ⑧ 绑定（六个入口一次绑好；撤销按钮复用 §2.7 的栈） */
+  /* ⑧ 重新出图（§2.11）：图落后于原型代码时，由**服务端**按当前代码重出一遍。
+     为什么只能服务端做：重出图 = 真跑一次浏览器渲染，前端那点能力只能改 src、造不出像素；
+     这也正是"要不要 AI 帮忙"的答案 —— 不用，判据是代码指纹与 mtime，产图靠 Playwright。 */
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  function renderRefigure() {
+    var btn = document.getElementById('navRefigure'); if (!btn) return;
+    if (currentPage() !== 'prd') { btn.hidden = true; return; }   // 图册页没有"本文档的图"
+    btn.hidden = false;
+    btn.disabled = !(S.auth && !S.offline) || refiguring;
+    // 角标只给"能动手的人"看：游客看到「3 张待更新」只会以为文档坏了
+    btn.classList.toggle('is-stale', !!(S.auth && fig.stale));
+    btn.textContent = (S.auth && fig.stale) ? ('重新出图 · ' + fig.stale + ' 张待更新') : '重新出图';
+    btn.title = S.offline ? '连不上本地导出服务，或当前服务是只读模式'
+      : (!S.auth ? '登录后可重出图'
+        : (fig.stale ? '原型代码改过了，点击按当前代码重出这些图'
+          : (fig.manual ? '另有 ' + fig.manual + ' 张图缺源，需人工处理'
+            : '图与原型代码一致')));
+  }
+
+  /* 把待更新的图在正文里标出来。**只描边、绝不动 src**：
+     图长什么样只有服务端渲染得出来，前端私自换图会让"图 = 代码"这条铁律失守。
+     ⚠️ 只标 `fixable` 的：图**丢了**且没人知道它从哪来（如手工产物被删）时，
+     服务端也修不了，描边会让人以为"点一下按钮就好"——那是误导，交给浏览器的破图提示。 */
+  function paintFigures() {
+    var stale = {};
+    (fig.figures || []).forEach(function (f) {
+      if (!f.stale || f.fixable === false) return;
+      var key = String(f.src || '').split('?')[0].split('#')[0];
+      stale[key] = f;
+      try { stale[decodeURIComponent(key)] = f; } catch (e) { /* 非法转义就不建别名 */ }
+    });
+    document.querySelectorAll('#prdContent img[src]').forEach(function (img) {
+      var raw = img.getAttribute('src') || '';
+      var key = raw.split('?')[0].split('#')[0];
+      var hit = stale[key];
+      if (!hit) { try { hit = stale[decodeURIComponent(key)]; } catch (e) { hit = null; } }
+      if (hit) {
+        if (img.dataset.pmTitle === undefined) img.dataset.pmTitle = img.getAttribute('title') || '';
+        img.classList.add('pm-figure-stale');
+        img.title = '此图落后于原型代码' + (hit.source ? '' : '（缺源，需人工处理）');
+      } else if (img.classList.contains('pm-figure-stale')) {
+        img.classList.remove('pm-figure-stale');
+        img.title = img.dataset.pmTitle || '';
+      }
+    });
+  }
+
+  async function loadFigureStatus() {
+    if (!window.PMService || !window.PMService.figureStatus || currentPage() !== 'prd') return;
+    try { fig = (await window.PMService.figureStatus()) || { stale: 0, figures: [] }; }
+    catch (e) { fig = { stale: 0, total: 0, manual: 0, figures: [] }; }
+    paintFigures(); renderRefigure();
+  }
+
+  // 重出后必须打时间戳：HTTP 缓存里那份同名 PNG 还是旧的，浏览器不会自己重取。
+  // ⚠️ 只给**这次真的重出过的**图打 —— 手工产物、别人的图不该被顺手重取一遍。
+  function bustFigureCache(list) {
+    if (!list || !list.length) return;
+    var want = {};
+    list.forEach(function (s) {
+      want[s] = 1;
+      try { want[decodeURIComponent(s)] = 1; } catch (e) { /* 非法转义就不建别名 */ }
+    });
+    var stamp = Date.now();
+    document.querySelectorAll('#prdContent img[src]').forEach(function (img) {
+      var key = (img.getAttribute('src') || '').split('?')[0].split('#')[0];
+      var alias = key;
+      try { alias = decodeURIComponent(key); } catch (e) { /* 保持原样 */ }
+      if (!want[key] && !want[alias]) return;
+      img.setAttribute('src', key + '?v=' + stamp);
+      img.classList.remove('pm-figure-stale');
+      img.title = img.dataset.pmTitle || '';
+    });
+  }
+
+  async function refigureAll() {
+    if (refiguring || !S.auth) return;
+    var btn = document.getElementById('navRefigure');
+    refiguring = true; renderRefigure();
+    // 先记下"这次要修的图"：重出完成后 fig 会被服务端的新状态覆盖，届时再取就取不到了
+    var pending = (fig.figures || []).filter(function (f) { return f.stale && f.fixable !== false; })
+                                    .map(function (f) { return String(f.src || '').split('?')[0].split('#')[0]; });
+    try {
+      var job = await window.PMService.refigure({
+        viewport: { width: Math.round(innerWidth || 1440), height: Math.round(innerHeight || 900) }
+      });
+      // 内容已是最新不是错误：服务端回 {started:false, uptodate:true}，直接收工
+      if (job && job.uptodate) { toast(job.message || '所有图都是最新的，无需重出'); return; }
+      if (!job || !job.started) throw new Error((job && job.error) || '重出图没有启动');
+      var deadline = Date.now() + 600000;
+      while (Date.now() < deadline) {
+        var st = await window.PMService.exportStatus();
+        if (st.job_id && st.job_id !== job.job_id) throw new Error('导出任务已切换，请重新确认结果');
+        var tip = (st.source_total > 1) ? ('（' + (st.source_index || 1) + '/' + st.source_total + ' 个原型）') : '';
+        if (btn) btn.textContent = '正在重出 ' + (st.total ? (st.progress + '/' + st.total) : '…') + tip;
+        if (st.done) {
+          if (st.error) throw new Error(st.error);
+          bustFigureCache(pending);
+          await loadFigureStatus();
+          toast('已按当前原型代码重出 ' + (st.success_count || 0) + ' 张图');
+          return;
+        }
+        await sleep(800);
+      }
+      throw new Error('重出图等待超时，请查看项目里的 .pm-workflow/service.log');
+    } catch (ex) {
+      toast((ex && ex.message) || '重出图失败', true);
+    } finally {
+      refiguring = false; renderRefigure();
+    }
+  }
+
+  /* ⑨ 绑定（六个入口一次绑好；撤销按钮复用 §2.7 的栈） */
   function bind() {
     var dp = nav('dual-pane'); if (dp) dp.addEventListener('click', function () { window.toggleDualPane(); render(); });
     nav('edit').addEventListener('click', function () {
@@ -1532,6 +1688,7 @@ body { padding-top:60px; }
     nav('save').addEventListener('click', saveAll);
     nav('prototype').addEventListener('click', function () { if (LINKS.prototype) window.open(LINKS.prototype, '_blank'); });
     nav('gallery').addEventListener('click', function () { if (LINKS.gallery) window.open(LINKS.gallery, '_blank'); });
+    var rf = document.getElementById('navRefigure'); if (rf) rf.addEventListener('click', refigureAll);
     // 任何编辑落进正文 → 保存按钮高亮（复用一个 passive 监听，别动 §2.7 内部逻辑）
     document.addEventListener('input', function (ev) {
       if (!S.editing || !ev.target.closest || !ev.target.closest('#prdContent')) return;
@@ -1542,7 +1699,7 @@ body { padding-top:60px; }
     var root = $('#prdContent'); if (root) mo.observe(root, { childList: true, subtree: true });
   }
 
-  /* ⑨ 启动：先问身份，再决定挂不挂 contenteditable */
+  /* ⑩ 启动：先问身份，再决定挂不挂 contenteditable */
   async function boot() {
     var me = { auth: false, user: null, editing_enabled: false, offline: true };
     try { if (window.PMService && window.PMService.me) me = await window.PMService.me(); } catch (e) { /* 游客 */ }
@@ -1556,6 +1713,7 @@ body { padding-top:60px; }
     lockEditable(true);                       // 未进入编辑态前一律只读
     render(); bind();
     if (S.auth) await loadChangeLog();
+    if (S.auth) loadFigureStatus();           // §2.11：待更新的图在正文里描边、角标进按钮
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
   window.PMTopbar = { state: S, refresh: render, setEditing: setEditing, lockEditable: lockEditable };
@@ -1570,7 +1728,7 @@ body { padding-top:60px; }
 
 静态图册页（§3.0 问一 A 的产物，`[需求名]/原型/[需求名]-prototype.html`）**必须复用本节的同一套顶栏**：同一个 `.topbar` 结构、同一个标题栏（`.tb-mark` + 产品名 + 版本号）、同样六个 `data-pm-nav` 按钮、同样的 CSS 变量来源。
 
-- 差异**只允许两处**：① `.tb-user` 与 `.changelog-panel` 不出现（图册不可编辑）；② **顶栏容器上写 `data-pm-topbar="gallery"`**（PRD 页写 `data-pm-topbar="prd"`）——模块据此把「静态图册」按钮标为当前页（`is-on` + 置灰），另一页的对应按钮则照常可跳转。
+- 差异**只允许三处**：① `.tb-user` 与 `.changelog-panel` 不出现（图册不可编辑）；② **顶栏容器上写 `data-pm-topbar="gallery"`**（PRD 页写 `data-pm-topbar="prd"`）——模块据此把「静态图册」按钮标为当前页（`is-on` + 置灰），另一页的对应按钮则照常可跳转；③ **v2.6：「重新出图」按钮不出现**——图册页没有"本文档的图"，模块里 `renderRefigure()` 见到 `currentPage() !== 'prd'` 就把它 `hidden`。**结构照抄，行为交给模块判**，不要在图册页里手写差异。
 - **标题栏文案要与 PRD 完全一致**（同一个产品名、同一个版本号）——用户的原话是「**静态图册页的导航以及标题栏与 PRD 页的保持统一**」。两页并排时应该看不出是两个人做的。
 - 图册页也 `boot()` 同一个模块：`PMEdit` 不存在 → 「撤销/保存」天然置灰；`/api/me` 返回游客 → 编辑入口弹登录框。**不要为图册页另写一套顶栏逻辑。**
 
@@ -1606,6 +1764,98 @@ body.pm-embedded .topbar { display:none; }
 | 6 | 记录**不在** `#prdContent` 里（复制全文粘出去不应带记录表） | 记录被当成"附录章节"写进正文 |
 | 7 | 静态图册页的 `.topbar` 结构与文案与 PRD 页一致 | 图册页顶栏是另一套按钮/另一个产品名 |
 | 8 | 交互原型页**没有** `.topbar` / `data-pm-nav`；且**不存在** `*-prototype-flow.html` 这类薄外壳 | 原型页顶上多了一条我方导航；或真的产出了薄外壳文件 |
+| 9 | 顶栏右侧有 `.topbar-tools`，「重新出图」按钮**不带 `data-pm-nav`**（§2.11） | 给它加了 `data-pm-nav` → 变成"第七个固定导航"，`validate_prd.py` 直接判错 |
+
+---
+
+### 2.11 「重新出图」：图与原型代码的一致性（v2.6 新增 · 必做）
+
+**要解决的问题：** §3.9 铁律 3 规定「代码改了必须重渲染，`原型截图/*.png` 的 mtime 必须 ≥ 对应原型代码的 mtime」。但**截图没法靠"编辑正文"更新**——它是浏览器渲染出来的像素。v2.5 及以前，一旦有人动了原型代码，PM 只能自己回本地开终端重跑一遍导出；同事在内网上更是完全无能为力。结果是 PRD 里挂着旧图，评审时图和代码分叉，而没人发现。
+
+#### ① 判据：拿什么认定"这张图过期了"
+
+**两级判据，可靠优先：**
+
+| 级别 | 怎么判 | 覆盖范围 |
+|---|---|---|
+| **签名（主）** | 导出时把渲染参数（`scale` / `viewport`）连同 `signature` 一起写进 `.export-manifest.json`；判定时用 `_render_signature()` 按同样参数**复算**一遍，不等即过期 | 精确。任何被渲染的代码（同需求目录下的 `html/css/js/mjs` + 内联图片）改一个字节都会命中——因为它对**文件内容**做哈希 |
+| **mtime（兜底）** | 清单里没有渲染参数（v2.6 之前导出的老清单）时，退回 §3.9 那条"PNG 的 mtime ≥ 原型代码的 mtime" | 粗糙但能兜住老项目 |
+
+> **⚠️ 别用 mtime 冒充主判据。** 实测踩过：只 `touch` 原型文件（改时间戳、内容没变），签名不变 → 正确判为"最新"。反过来，内容改了但 mtime 因为复制/解压被拉平，mtime 判据会漏。**所以新导出一律写签名，mtime 只做老清单的过渡。**
+
+**手工产物不判、不碰。** `原型截图/` 里还有 PM 手工放进去的图（§3.5 那条"不许通配符清场"的同一个理由）——它们不在清单里，服务端不知道它们"该长什么样"，一律标 `unmanaged` 跳过。
+
+#### ② 三种"不是最新"，处理方式不同
+
+| 状态 | `reason` | 按钮会怎么处理 |
+|---|---|---|
+| 图在、但签名/mtime 落后 | `signature` / `mtime` | ✅ **可重出**，计入角标 |
+| 图丢了，但清单里记着它出自哪个原型 | `missing-image` | ✅ 可重出（重新渲一遍就回来了） |
+| 图丢了，且没有来源记录 | `missing-image`（无 source） | 🚫 标 `manual`：服务端代劳不了，**正文里也不描边**（描边会让人以为"点一下就好"，那是误导），交给浏览器自带的破图提示 |
+| 源原型 HTML 被删了 | `missing-source` | 🚫 同上，标 `manual` |
+
+#### ③ 按钮长在哪 · 为什么**不是**第七个导航
+
+放在顶栏最右侧、与六个固定导航**用一道竖线隔开**的 `.topbar-tools` 工具区里：
+
+```html
+  </nav>
+  <span class="topbar-tools">
+    <button type="button" id="navRefigure" hidden>重新出图</button>
+    <span class="tb-user" id="tbUser" hidden></span>
+  </span>
+```
+
+> **⚠️ 绝不能给它加 `data-pm-nav`。** §2.10 ① 的"六个固定导航不增不减"是硬约定，`validate_prd.py` 按 `TOPBAR_NAV_ORDER` 逐项比对——加了就判"多出一个 重新出图"。**"导航"是给人来回跳的，"工具"是对当前文档做一次动作的**，两件事同处一条栏但不同组，用分隔线把这条边界画在视觉上。
+
+**可用性与其他编辑动作同口径（能写文件才可用）：** 游客 / 未登录 / 服务连不上 / `READ_ONLY` → 置灰。**角标只对已登录的人显示**——游客看到「3 张待更新」只会以为文档坏了。
+
+#### ④ 一次点击，服务端做什么
+
+```
+点「重新出图」
+  → POST /api/refigure {path: 当前 PRD}
+  → 服务端 _figure_report() 算出「待更新」的图，按*源原型 HTML* 去重（一份 PRD 的图可能来自
+     原型/ 和 流程图/ 两个源）
+  → 没有任何可重出的 → 直接回 {started:false, uptodate:true}，不是错误
+  → 否则起一个后台线程，对每个源依次跑整轮渲染（复用「一键导出所有截图」那条链路）
+  → 前端轮询 /api/status（两个动作共用一个状态机），完成后：
+       ① 给*这次真的重出过的*那些 <img> 打上 ?v=时间戳（不打时间戳浏览器会吃缓存里的旧图）
+       ② 重新拉一次 /api/figure-status，角标与描边随之清零
+```
+
+**多源时进度要能累加。** 实测踩过：`_run_screenshots()` 每跑完一个源就把 `_state` 写成 `done=true`，前端看到第一个源结束就收工，第二、第三个源的结果永远等不到。所以渲染逻辑被拆成"渲染"（`_render_pages`，不碰状态）与"收尾"（`_screenshot_thread` / `_refigure_thread`，各自决定什么时候算完）。
+
+**单个源里有页面渲染失败 → 整个源不替换**（与「一键导出所有截图」同口径）。宁可全旧，也不要"一半新一半旧"——后者比全旧更难发现。
+
+#### ⑤ 前端只做两件事，且**绝不动 `src` 的语义**
+
+| 做什么 | 不做什么 |
+|---|---|
+| 给待更新的图加 `.pm-figure-stale`（琥珀虚线描边）+ `title` 提示 | **不换图、不生成图**：图长什么样只有服务端渲染得出来，前端私自替换会让"图 = 代码"失守 |
+| 重出完成后给**重出过的那几张**打 `?v=` 时间戳破缓存 | 不给手工产物、别人的图顺手打时间戳（那是无谓的全量重取） |
+
+#### ⑥ 关于"要不要 AI 帮忙"
+
+**不用，也不该用。** 这件事的两端都是确定性的：**判据**是代码指纹与 mtime（不是语义判断），**产图**是 Playwright 渲染（不是生成）。塞一个模型进来只会把"可复现"变成"看运气"。§3.9 的边界也在这里：**重渲染只保证「图 = 代码」，保证不了「代码 = PRD」**——PM 在正文里改了按钮名、加了状态，原型代码里并没有跟着改，重出多少次都一样。那种情况下必须有人去改代码，这是 §3.10 的活，不是这个按钮的活。
+
+#### ⑦ 接口
+
+| 接口 | 方法 | 入参 | 返回 | 门禁 |
+|---|---|---|---|---|
+| `/api/figure-status` | POST | `{path}` | `{figures:[{src,file,label,stale,fixable,reason,source}], total, stale, manual, unmanaged, sources}` | 项目 token（游客也能查，只是看不到角标） |
+| `/api/refigure` | POST | `{path, viewport?}` | `{started, job_id, stale, sources, count}`；无事可做时 `{started:false, uptodate:true, message}` | **必须已登录**（会写盘） |
+
+#### ⑧ 30 秒自检（交付前逐条过）
+
+| # | 检查 | 不合格的样子 |
+|---|---|---|
+| 1 | 顶栏有 `.topbar-tools`，且里面的按钮**没有** `data-pm-nav` | 变成第七个导航；或干脆把它塞进 `.topbar-actions` |
+| 2 | 未登录时按钮置灰、**不显示**角标 | 游客看到"3 张待更新" |
+| 3 | 改了原型代码后重新打开 PRD，待更新的图有描边、按钮出现「· N 张待更新」 | 角标永远是 0（判据没接通） |
+| 4 | 点一次按钮，等它跑完，角标清零且图真的换成了新的 | 角标清零但图没变（忘了打 `?v=` 时间戳，浏览器还在吃缓存） |
+| 5 | 手工放进 `原型截图/` 的图**不**被描边、**不**被重出 | 服务端把 PM 的手工资产一起重渲了 |
+| 6 | 源原型已删的图**不**被描边，只计入 `manual` | 描边了却修不好 → 误导 |
 
 ---
 
@@ -2684,6 +2934,10 @@ const EDGES = [
 > **交付到钉钉的方式：**
 > 在浏览器中打开 PRD HTML 文件，对需要的部分用截图工具（Mac: `Cmd+Ctrl+Shift+4`）截图，然后直接 `Cmd+V` 粘贴到钉钉文档。
 
+> **v2.6：还有一种交付方式是"给链接"，不只是"发文件"（§2.9 甲）。**
+> 用户要的是「**产品经理可编辑、其他人可看**」的在线协作形态——那就 `start_service.py --lan`，把 `http://<你的内网IP>:<端口>/` 发出去，同事打开的是**活的** PRD（能读、能登录、能编辑、图也是服务现渲染的），而不是一份拷来拷去的静态副本。**交付说明里必须写清三件事**：① 那台机器要**一直开着**（关了就全体掉线）；② 内网 IP 变了旧链接失效（要长期用就让网管绑固定 IP）；③ 编辑账号怎么来的（`--add-user`，口令交互输入）。**别只发一条链接就完事**——同事连不上时，这三条就是排查清单。
+> 如果只是"给对方看看"、不需要他改，那就用 `--read-only`（甚至更省事：直接拷文件）。**把"能不能改"说清楚**，否则对方会以为能在链接上直接改 PRD 正文。
+
 ### 5.2 PRD最终检查清单
 
 > **第一步：先跑机械校验，红了先修（不要靠肉眼）。**
@@ -2724,7 +2978,9 @@ const EDGES = [
 - [ ] ★ **顶栏六个固定导航齐全且顺序正确**（§2.10）：`dual-pane / edit / undo / save / prototype / gallery` 六个 `data-pm-nav` 一个不少、一个不多；顶栏在 `#prdContent` **之外**（`<body>` 第一个子元素）；**页面上没有残留的右下角 `.fab-group` / `.save-btn-container`**（会出现两个保存按钮）
 - [ ] ★ **游客态实测**（§2.10 ②）：不登录直接打开，`#prdContent` 里 `[contenteditable]` 数量为 **0**（改不动）；「撤销/保存」置灰；点「编辑」弹出的是登录框（未配账号时给的是可抄的 `--add-user` 命令），**不是一句"无权限"**
 - [ ] ★ **登录 → 编辑 → 保存 → 改动记录实测一轮**（§2.10 ③④）：登录后能改；保存后文件尾部出现**唯一**的一个 `<script id="pm-change-log">`（`#prdContent` 之外），四列「修改人/修改时间/修改内容/位置」都真填上了；**同一份 PRD 连存两次，记录块不重复插入、记录条数递增**
-- [ ] ★ **静态图册页外壳与 PRD 页统一**（§2.10 ⑥）：图册页 `.topbar` 的结构、六个 `data-pm-nav`、标题栏文案与 PRD 页逐项一致；被 iframe 嵌入时顶栏不重复显示（`body.pm-embedded`）
+- [ ] ★ **静态图册页外壳与 PRD 页统一**（§2.10 ⑥）：图册页 `.topbar` 的结构（含 `.topbar-tools`）、六个 `data-pm-nav`、标题栏文案与 PRD 页逐项一致；被 iframe 嵌入时顶栏不重复显示（`body.pm-embedded`）；图册页上**看不到**「重新出图」（模块按 `data-pm-topbar="gallery"` 自动隐藏）
+- [ ] ★ **「重新出图」实测一轮**（§2.11）：改一处原型代码 → 重新打开 PRD，落后的图有琥珀虚线描边、按钮显示「· N 张待更新」；点一下跑完 → 角标清零、图真的换成新的（不是缓存里的旧图）；**手工放进 `原型截图/` 的图不被描边、不被重出**；源原型已删的图不描边（只计入需人工处理）
+- [ ] ★ **内网托管实测一轮**（§2.9 甲）：`start_service.py --lan` 起来后，用**另一台机**打开 `http://<内网IP>:端口/`——能打开、能登录、能编辑、能保存；关掉那台机器的服务后同事端提示连不上（而不是白屏或静默失败）
 - [ ] ★ **交互原型页没有本流程的导航**（§2.10 ⑦ / §3.8）：打开它看不到 `.topbar`；项目里**不存在** `*-prototype-flow.html` 这类薄外壳文件
 - [ ] ★ 原型中所有文案/数据/状态 与 PRD「详细方案」描述列完全一致（已通过 3.6 自查）
 - [ ] ★ 「📋 一键复制全文」实测粘贴一次：原型 iframe 已变成图片（或服务未启动时**如实提示**了「原型图缺失」，不是静默丢图）——见 §2.8
@@ -2772,7 +3028,8 @@ const EDGES = [
 | 16 | PRD 的页面映射（如 `pageAliases`、端侧页面集合、预览状态） | 新增页或删除端侧时需同步 |
 | 17 | 正文末尾「待后续确认的产品口径」清单 | 本次新产生的"待确认"要加进去；本次已确认关闭的条目改为「已确认：xxx」（不删除） |
 | 18 | 交付前 | 重跑 `validate_prd.py`（§5.2），确认改动没有打破表头/分块/data-preview/编号连续性；**再按 §3.9 自证**：报出本次真实改动的原型代码（路径 + mtime）、图 ↔ 代码对应条数、图 mtime ≥ 代码 mtime 的核对结果 |
-| 19 | **PRD 顶栏六导航 / 登录门禁 / 改动记录（§2.10）** | 新增端或新增产出物时：`PM_LINKS` 的 `gallery` / `prototype` 两个目标路径要跟着改（没产的置灰而不是留死链）；**静态图册页的顶栏与标题栏必须跟着 PRD 页一起改**（两页是一套外壳）；`PM_LINKS` 指向的交互原型若换了文件，同步改路径。**改完实测一遍游客态与登录态**（§5.2 对应两条） |
+| 19 | **PRD 顶栏六导航 / 登录门禁 / 改动记录（§2.10）** | 新增端或新增产出物时：`PM_LINKS` 的 `gallery` / `prototype` 两个目标路径要跟着改（没产的置灰而不是留死链）；**静态图册页的顶栏与标题栏必须跟着 PRD 页一起改**（两页是一套外壳，含 `.topbar-tools`）；`PM_LINKS` 指向的交互原型若换了文件，同步改路径。**改完实测一遍游客态与登录态**（§5.2 对应两条） |
+| 20 | **「重新出图」与内网托管（§2.11 / §2.9）** | 只要这次产出了原型截图，就要顺手确认 `.export-manifest.json` 里每条都写了 `scale` / `viewport`（新导出自带，老清单没有 → 判定会退回 mtime）；**改了原型代码后交付前点一次「重新出图」**，别把"图和代码不是同一次渲染"的产物交出去；要开内网协作就 `start_service.py --lan`，并把这台机**要一直开着 / IP 会漂**这两条写进交付说明 |
 
 > **裁剪章节的处理：** 上表第 4/4.1/5/6/10/11/12/13 项对应的章节可能在初稿时已按 2.2 裁掉。遍历到这些位置时：
 > - 该章节**当前存在** → 按上表正常同步。

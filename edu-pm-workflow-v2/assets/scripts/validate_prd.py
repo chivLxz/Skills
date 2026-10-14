@@ -583,7 +583,18 @@ def validate_topbar(prd_path):
             errors.append("页面里仍残留 `.%s`（%s）——v2.5 起这两个动作已并入顶栏，"
                           "留着会出现两个保存按钮且状态不同步（§2.10 ⑤）" % (cls, label))
 
-
+    # ③b v2.6：六个导航右侧要有工具区，「重新出图」不许带 data-pm-nav（§2.11 ③）
+    if m_top:
+        if not re.search(r'class\s*=\s*["\'][^"\']*\btopbar-tools\b', text):
+            errors.append("顶栏没有 `.topbar-tools` 工具区——v2.6 起「重新出图」（§2.11）"
+                          "长在六个固定导航右侧、用一道竖线与导航分隔，别塞进 `.topbar-actions`")
+        elif not re.search(r'id\s*=\s*["\']navRefigure["\']', text):
+            errors.append("`.topbar-tools` 里没有 `#navRefigure`（「重新出图」按钮，§2.11 ③）")
+        m_rf = re.search(r'<button[^>]*id\s*=\s*["\']navRefigure["\'][^>]*>', text)
+        if m_rf and re.search(r'data-pm-nav\s*=', m_rf.group(0)):
+            errors.append("「重新出图」按钮带了 `data-pm-nav`——它会变成第七个固定导航，"
+                          "破坏 §2.10 ① 的「不增不减」；它是「工具」不是「导航」（§2.11 ③）")
+    
     # ④ 静态图册页：导航与标题栏必须与 PRD 页逐项一致
     links = _pm_links(prd_path, text)
     stats = {"navs": len(navs), "gallery": 0, "prototype": 0}
@@ -602,6 +613,12 @@ def validate_topbar(prd_path):
             if _pm_tb_text(gtext) != _pm_tb_text(text) and _pm_tb_text(text):
                 errors.append("静态图册页的标题栏文案与 PRD 页不一致（§2.10 ⑥）：%s；PRD 页是 %s"
                               % (_pm_tb_text(gtext) or "（没有标题栏）", _pm_tb_text(text)))
+            # v2.6：图册页要照抄同一套外壳（含工具区），差异交给模块按 data-pm-topbar 自判；
+            # 缺了工具区说明是"又抄了一版"，两页并排就会露馅（§2.10 ⑥）
+            if re.search(r'\btopbar-tools\b', text) and not re.search(r'\btopbar-tools\b', gtext):
+                errors.append("静态图册页缺少 `.topbar-tools`（PRD 页有）——图册页要复用同一套"
+                              "顶栏外壳，「重新出图」按钮由模块按 data-pm-topbar 自动隐藏，"
+                              "不要在两页里各写一版（§2.10 ⑥）")
 
     # ⑤ 交互原型页：不许加本流程的导航外壳
     proto = links.get("prototype")

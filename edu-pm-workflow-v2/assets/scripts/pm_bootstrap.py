@@ -25,8 +25,9 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pm_runtime import (VERSION, atomic_write, ensure_config, probe_health,  # noqa: E402
-                        reroll_ports)
+from pm_runtime import (VERSION, atomic_write, config_host, ensure_config,  # noqa: E402
+                        is_lan_host, primary_lan_address, probe_health, reroll_ports,
+                        require_editor_account_for_lan)
 
 PLAYWRIGHT_VERSION = os.environ.get("PM_PLAYWRIGHT_VERSION", "1.60.0")
 MIN_PYTHON = (3, 9)
@@ -309,15 +310,28 @@ def reserve_ports(root, config, attempts=8):
     raise RuntimeError("连续多次都没抽到可用端口，请检查本机端口占用情况")
 
 
-def ensure_serving(root, background=False, read_only=False, host="127.0.0.1",
+def reachable_url(host, port):
+    """给用户看的地址：绑 0.0.0.0 时要换成本机主网卡地址，
+    否则他照着 0.0.0.0 复制出去，同事根本打不开。"""
+    if host in ("0.0.0.0", "::"):
+        host = primary_lan_address()
+    return f"http://{host}:{port}"
+
+
+def ensure_serving(root, background=False, read_only=False, host=None,
                    open_browser=False, verbose=True, allow_download=True):
     """确保当前项目的服务在跑。
 
     前台：占用当前窗口，服务本体就是前台进程，⌃C 可停。
     后台：脱离终端，日志进 .pm-workflow/service.log。
+
+    `host=None` 时取 runtime.json 里记的监听地址（`--lan` 会写进去），
+    这样双击入口脚本起的服务也能是内网可访问的。
     """
     root = Path(root).resolve()
     config = ensure_config(root)
+    if host is None:
+        host = config_host(config)
 
     state = probe_health(config["port"])
     if state:
@@ -326,11 +340,11 @@ def ensure_serving(root, background=False, read_only=False, host="127.0.0.1",
         if bool(state.get("read_only")) != bool(read_only):
             raise RuntimeError("已有服务的读写模式与本次请求不一致，请先停止它")
         if verbose:
-            print(f"  ✅ 当前项目服务已在运行：http://127.0.0.1:{config['port']}")
+            print(f"  ✅ 当前项目服务已在运行：{reachable_url(host, config['port'])}")
         return "already-running", config
 
-    if host not in ("127.0.0.1", "localhost", "::1") and not read_only:
-        raise RuntimeError("局域网监听只允许 --read-only 模式")
+    # v2.6：局域网可写从「一律禁止」改成「必须先有编辑账号」，理由见 pm_runtime。
+    require_editor_account_for_lan(root, host, read_only)
 
     python, _engine = ensure_runtime(allow_download=allow_download, verbose=verbose)
     config = reserve_ports(root, config)
@@ -340,6 +354,8 @@ def ensure_serving(root, background=False, read_only=False, host="127.0.0.1",
                     PM_OPEN_BROWSER="1" if (open_browser and not background) else None,
                     PROTOTYPE_PROJECT_DIR=str(root))
     command = [str(python), str(_server_script())]
+    if verbose and is_lan_host(host):
+        print(f"  🌐 已按内网托管启动，同事打开：{reachable_url(host, config['port'])}/")
 
     if not background:
         try:

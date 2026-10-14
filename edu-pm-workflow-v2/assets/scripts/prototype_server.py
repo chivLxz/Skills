@@ -37,8 +37,11 @@ from urllib.parse import quote, unquote, urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pm_bootstrap import launch_engine  # noqa: E402
 from pm_runtime import (SESSION_HEADER, VERSION, add_user, atomic_write, authenticate,  # noqa: E402
-                        cors_response_origin, ensure_config, load_users, make_session,
-                        origin_allowed, probe_health, public_user, remove_user, reroll_ports,
+                        config_host, cors_response_origin, ensure_config, host_points_at_self,
+                        is_lan_host, load_users, make_session, origin_allowed,
+                        primary_lan_address, probe_health, public_user,
+                        register_local_host, remove_user,
+                        require_editor_account_for_lan, reroll_ports,
                         users_path, valid_token, verify_password)
 
 
@@ -49,13 +52,24 @@ PROJECT_DIR = Path(os.environ.get("PROTOTYPE_PROJECT_DIR")
 CONFIG = ensure_config(PROJECT_DIR)
 PORT = int(CONFIG["port"])
 READ_ONLY = os.environ.get("PM_READ_ONLY") == "1"
-BIND_HOST = os.environ.get("PM_SERVER_HOST", "127.0.0.1")
-if BIND_HOST not in ("127.0.0.1", "localhost", "::1") and not READ_ONLY:
-    raise RuntimeError("局域网监听只允许只读模式")
+# 监听地址：`--host` / `--lan` 会把它写进 runtime.json，这里读配置；环境变量优先，
+# 因为 pm_bootstrap 拉起子进程时就是这么传的。
+BIND_HOST = os.environ.get("PM_SERVER_HOST") or config_host(CONFIG)
+# v2.6：局域网可写监听从「一律禁止」改成「要求先有编辑账号」。原来的一刀切是
+# 因为 v2.5 的权限模型只有本机账号，内网访客连上来也认不出人；现在账号即权限，
+# 真正要防的变成了「托上去谁都编辑不了」这种更难查的故障（见 main() 的检查）。
+register_local_host(BIND_HOST)
+if is_lan_host(BIND_HOST):
+    register_local_host(primary_lan_address())
 # 产物按「需求名」分文件夹后，原型/流程图位于 [需求名]/原型/、[需求名]/流程图/；
 # 旧的扁平结构 原型/、流程图/ 仍兼容。截图输出到原型/流程图所在需求目录下的
 # 原型截图/、流程图截图/（旧扁平结构回退到项目根的对应目录）。
-SERVER_URL = f"http://127.0.0.1:{PORT}"
+# 生成给同事的链接不能再用 127.0.0.1：绑 0.0.0.0 时取本机主网卡地址。
+def _public_host(bind_host):
+    return primary_lan_address() if bind_host in ("0.0.0.0", "::") else bind_host
+
+
+SERVER_URL = f"http://{_public_host(BIND_HOST)}:{PORT}"
 DEFAULT_VIEWPORT = {"width": 1440, "height": 900}
 EXPORT_DEVICE_SCALE = 2
 
@@ -809,52 +823,70 @@ async def _wait_for_export_ready(page):
     )
 
 
+async def _render_pages(html_path, options, stage, progress_base=0):
+    """把一个 HTML 的所有可导出版面渲进 stage，返回 (items, failures)。
+
+    **不负责收尾**（不写 done/error、不 publish）——因为「一键重出图」（§2.11）一次要跑
+    多个原型源，进度得跨源累加；旧写法每跑一个源就把 _state 重置成"完成"，
+    前端会以为干完了就收工，第二、第三个源的结果再也等不到。
+    """
+    viewport = _normalize_viewport((options or {}).get("viewport"))
+    failures, items = [], []
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as p:
+        browser = await _open_browser_engine(p)
+        try:
+            page = await browser.new_page(viewport=viewport, device_scale_factor=EXPORT_DEVICE_SCALE)
+            base_url = f"{SERVER_URL}{_relative_url_path(html_path)}"
+            if _is_flow_html(html_path):
+                await page.goto(base_url, wait_until="networkidle")
+                targets = [{"page_id": f"chart-{i}", "label": f"图{i}", "element": e}
+                           for i, e in enumerate(await page.locator(".chart-container").element_handles(), 1)]
+            else:
+                targets = await _discover_pages(page, html_path, _extract_source_labels(html_path))
+                await _force_tiled_mode(page)
+            if not targets:
+                raise RuntimeError("未找到可导出的页面")
+            _update_state(total=progress_base + len(targets))
+            used = set()
+            for i, target in enumerate(targets):
+                label = target["label"]
+                _update_state(progress=progress_base + i, current=label)
+                try:
+                    if "element" in target:
+                        element = target["element"]
+                    else:
+                        await _force_tiled_mode(page)
+                        await _set_tab(page, target.get("tab"))
+                        element = await _wait_for_visible_device(page, target["page_id"])
+                    await _wait_for_export_ready(page)
+                    name = _dedupe_filename(_owned_filename(html_path, label), used)
+                    signature = _render_signature(html_path, target["page_id"], scale=EXPORT_DEVICE_SCALE, viewport=viewport)
+                    await element.screenshot(path=str(stage / name), type="png")
+                    items.append({"page_id": target["page_id"], "tab": target.get("tab"),
+                                  "label": label, "file": name, "signature": signature,
+                                  # v2.6：把渲染参数一并记进清单。没有它，「待更新」判定只能靠
+                                  # mtime 猜（无法复算签名）；记下来之后任何原型代码改动都能精确命中。
+                                  "scale": EXPORT_DEVICE_SCALE,
+                                  "viewport": {"width": viewport["width"], "height": viewport["height"]}})
+                except Exception as exc:
+                    failures.append({"page": label, "error": str(exc)})
+        finally:
+            await browser.close()
+    return items, failures
+
+
 async def _run_screenshots(html_path, options=None):
     options = options or {}
-    viewport = _normalize_viewport(options.get("viewport"))
     output = _output_root_for(html_path)
     output.mkdir(parents=True, exist_ok=True)
     failures, items = [], []
     _update_state(output_dir=str(output), html=str(html_path), files=[], failed_pages=[])
     try:
-        from playwright.async_api import async_playwright
         with tempfile.TemporaryDirectory(prefix=".export-", dir=output) as temp:
             stage = Path(temp)
-            async with async_playwright() as p:
-                browser = await _open_browser_engine(p)
-                try:
-                    page = await browser.new_page(viewport=viewport, device_scale_factor=EXPORT_DEVICE_SCALE)
-                    base_url = f"{SERVER_URL}{_relative_url_path(html_path)}"
-                    if _is_flow_html(html_path):
-                        await page.goto(base_url, wait_until="networkidle")
-                        targets = [{"page_id": f"chart-{i}", "label": f"图{i}", "element": e}
-                                   for i, e in enumerate(await page.locator(".chart-container").element_handles(), 1)]
-                    else:
-                        targets = await _discover_pages(page, html_path, _extract_source_labels(html_path))
-                        await _force_tiled_mode(page)
-                    if not targets: raise RuntimeError("未找到可导出的页面")
-                    _update_state(total=len(targets))
-                    used = set()
-                    for i, target in enumerate(targets):
-                        label = target["label"]
-                        _update_state(progress=i, current=label)
-                        try:
-                            if "element" in target:
-                                element = target["element"]
-                            else:
-                                await _force_tiled_mode(page)
-                                await _set_tab(page, target.get("tab"))
-                                element = await _wait_for_visible_device(page, target["page_id"])
-                            await _wait_for_export_ready(page)
-                            name = _dedupe_filename(_owned_filename(html_path, label), used)
-                            signature = _render_signature(html_path, target["page_id"], scale=EXPORT_DEVICE_SCALE, viewport=viewport)
-                            await element.screenshot(path=str(stage / name), type="png")
-                            items.append({"page_id": target["page_id"], "tab": target.get("tab"),
-                                          "label": label, "file": name, "signature": signature})
-                        except Exception as exc:
-                            failures.append({"page": label, "error": str(exc)})
-                finally:
-                    await browser.close()
+            items, failures = await _render_pages(html_path, options, stage)
             if failures:
                 _update_state(running=False, done=True, current="导出失败，保留上轮截图",
                               error="部分页面生成失败，本轮未替换旧图", failed_pages=failures,
@@ -871,6 +903,210 @@ async def _run_screenshots(html_path, options=None):
 def _screenshot_thread(html_path, options=None):
     with _snapshot_lock:
         asyncio.run(_run_screenshots(html_path, options))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 「重新出图」：PRD 引用的图与原型代码的一致性（§2.11）
+#
+# 场景：PM 在内网托管页上把 PRD 正文改了、工程师把原型代码改了，PRD 里嵌的那些
+# 截图就成了旧图——而截图不可能靠"编辑正文"更新，它必须由浏览器重新渲染。
+# 所以给 PRD 顶栏一个按钮：由**服务端**按当前代码重出全部待更新的图，PM 不用碰命令行。
+#
+# 判据分两级（可靠优先）：
+#   1. 清单里记了 scale/viewport → 用 _render_signature 复算签名比对。任何被渲染
+#      代码（html/css/js/内嵌图片）改动都会让它不等 → 精确，且与缓存命中判定同源。
+#   2. 老清单没记参数（v2.6 之前导出的）→ 退回 mtime 判据，即 §3.9 铁律 3。
+# 手工放进 原型截图/ 的图（清单里没有）一律不判、不碰 —— 它们是 PM 的资产，
+# 服务端对它们没有"该长什么样"的信息（§3.5 那条"不许通配符清场"的同一个理由）。
+# ─────────────────────────────────────────────────────────────────────────────
+
+_FIGURE_IMG_RE = re.compile(r"<img\b[^>]*>", re.I)
+_FIGURE_ATTR_RE = re.compile(r"([\w:.-]+)\s*=\s*\"([^\"]*)\"")
+_FIGURE_DIRS = ("原型截图", "流程图截图")
+# 判定"原型代码"时的候选文件类型：与 _render_signature 收集的范围保持一致
+_SOURCE_EXTS = {".html", ".css", ".js", ".mjs"}
+
+
+def _manifest_index():
+    """扫项目里所有 `.export-manifest.json`，建 `文件名 → (源 HTML, item)` 索引。
+
+    之所以按文件名而不是按目录索引：同一份 PRD 的图可能来自 `原型/` 和 `流程图/`
+    两个源，而文件名里已经带了所属原型 HTML 的短哈希（_owned_filename 的 owner），
+    跨目录撞名基本不可能。
+    """
+    index = {}
+    for manifest in PROJECT_DIR.rglob(MANIFEST_NAME):
+        if not manifest.is_file():
+            continue
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        for key, entry in data.items():
+            if not isinstance(entry, dict):
+                continue
+            source = Path(key)
+            if not source.is_absolute():
+                source = PROJECT_DIR / key
+            try:
+                source = source.resolve()
+            except OSError:
+                continue
+            for item in entry.get("items") or []:
+                name = (item or {}).get("file")
+                if name:
+                    index.setdefault(name, (source, item))
+    return index
+
+
+def _prd_figures(prd_path):
+    """从 PRD HTML 里挑出「指向截图目录」的 `<img>`：正文里真正嵌着的那些图。"""
+    try:
+        text = prd_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    found, seen = [], set()
+    for tag in _FIGURE_IMG_RE.findall(text):
+        attrs = {k.lower(): v for k, v in _FIGURE_ATTR_RE.findall(tag)}
+        raw = unquote(attrs.get("src", "")).strip()
+        if not raw or raw.startswith(("http://", "https://", "data:", "//")):
+            continue
+        clean = raw.split("?")[0].split("#")[0]
+        target = Path(clean.lstrip("/")) if clean.startswith("/") else prd_path.parent / clean
+        try:
+            target = target.resolve()
+        except OSError:
+            continue
+        if target.parent.name not in _FIGURE_DIRS or not _is_under(target, PROJECT_DIR):
+            continue
+        if target in seen:
+            continue
+        seen.add(target)
+        found.append({
+            "src": raw,
+            "file": target.name,
+            "alt": attrs.get("alt", ""),
+            "label": attrs.get("data-pm-figure") or attrs.get("alt") or target.stem,
+            "abs": target,
+        })
+    return found
+
+
+def _source_mtime(source):
+    """源 HTML 及其同目录同族代码的最新 mtime —— 只在老清单缺渲染参数时用作兜底。"""
+    newest = 0.0
+    try:
+        newest = source.stat().st_mtime
+    except OSError:
+        return newest
+    try:
+        for sibling in source.parent.iterdir():
+            if sibling.is_file() and sibling.suffix.lower() in _SOURCE_EXTS:
+                newest = max(newest, sibling.stat().st_mtime)
+    except OSError:
+        pass
+    return newest
+
+
+def _figure_state(img, index):
+    """单张图的「是否待更新」。
+
+    `fixable` 是给按钮用的：只有"知道源是谁"的图，服务端才可能把它重出来。
+    图丢了但清单里记着源 → 可修；图丢了且没人知道它从哪来 → 只能人工处理。
+    """
+    exists = img["abs"].is_file()
+    found = index.get(img["file"])
+    if not found:
+        # 手工产物（或别的工具出的图）：服务端不知道它该长什么样，不判、不碰。
+        if not exists:
+            return {"stale": True, "reason": "missing-image", "source": None, "fixable": False}
+        return {"stale": False, "reason": "unmanaged", "source": None, "fixable": False}
+
+    source, item = found
+    if not source.is_file():
+        return {"stale": True, "reason": "missing-source", "source": str(source), "fixable": False}
+    if not exists:
+        return {"stale": True, "reason": "missing-image", "source": str(source), "fixable": True}
+
+    scale, viewport = item.get("scale"), item.get("viewport")
+    if scale and isinstance(viewport, dict):
+        try:
+            fresh = _render_signature(source, item.get("page_id") or "", "",
+                                      int(scale), _normalize_viewport(viewport))
+        except Exception:
+            fresh = None
+        if fresh and item.get("signature"):
+            stale = item["signature"] != fresh
+            return {"stale": stale, "reason": "signature" if stale else "fresh",
+                    "source": str(source), "page_id": item.get("page_id"), "fixable": True}
+
+    try:
+        stale = img["abs"].stat().st_mtime + 0.5 < _source_mtime(source)
+    except OSError:
+        stale = False
+    return {"stale": stale, "reason": "mtime" if stale else "fresh",
+            "source": str(source), "fixable": True}
+
+
+def _figure_report(prd_path):
+    """整个 PRD 的图状态汇总：给顶栏「重新出图」角标与按钮用。"""
+    index = _manifest_index()
+    figures = []
+    for img in _prd_figures(prd_path):
+        state = _figure_state(img, index)
+        figures.append({
+            "src": img["src"], "file": img["file"], "label": img["label"],
+            "alt": img["alt"], "stale": state["stale"], "reason": state["reason"],
+            "fixable": state["fixable"], "source": state["source"],
+            "page_id": state.get("page_id"),
+        })
+    stale = [f for f in figures if f["stale"] and f["fixable"]]
+    manual = [f for f in figures if f["stale"] and not f["fixable"]]
+    sources = []
+    for f in stale:
+        if f["source"] and f["source"] not in sources:
+            sources.append(f["source"])
+    return {
+        "ok": True, "path": str(prd_path), "figures": figures,
+        "total": len(figures), "stale": len(stale), "manual": len(manual),
+        "unmanaged": sum(1 for f in figures if f["reason"] == "unmanaged"),
+        "sources": sources,
+    }
+
+
+def _refigure_thread(sources, options, job_id):
+    """依次对每个「有待更新图」的原型源跑一轮重出图，全程共用同一个 job_id。"""
+    with _snapshot_lock:
+        done, failures = 0, []
+        for idx, raw in enumerate(sources, 1):
+            source = Path(raw)
+            output = _output_root_for(source)
+            output.mkdir(parents=True, exist_ok=True)
+            _update_state(running=True, done=False, error=None, job_id=job_id,
+                          source_index=idx, source_total=len(sources),
+                          current=f"({idx}/{len(sources)}) {source.stem}",
+                          output_dir=str(output), html=str(source), files=[])
+            try:
+                with tempfile.TemporaryDirectory(prefix=".export-", dir=output) as temp:
+                    items, page_failures = asyncio.run(
+                        _render_pages(source, options, Path(temp)))
+                    if page_failures:
+                        # 单个源里只要有页面失败就整源不替换（与 /api/screenshot 同口径），
+                        # 免得出现"一半新一半旧"的混合状态——那比全旧更难发现。
+                        failures.extend(page_failures)
+                        continue
+                    _publish_batch(source, Path(temp), items)
+                    done += len(items)
+            except Exception as exc:
+                failures.append({"page": source.name, "error": str(exc)})
+        _update_state(
+            running=False, done=True, job_id=job_id, success_count=done, progress=done,
+            total=max(done, 1), failed_pages=failures, refigure=True,
+            current="完成" if not failures else "部分失败，已保留原图",
+            error=None if not failures else "部分页面生成失败，未替换对应源的原图",
+        )
 
 
 def _snapshot_cache_key(page_id, query):
@@ -1031,15 +1267,14 @@ class Handler(BaseHTTPRequestHandler):
             return False
         try:
             parsed = urlparse(raw)
-            return (parsed.scheme == "http"
-                    and parsed.hostname in {"127.0.0.1", "localhost"}
-                    and parsed.port == PORT)
         except (TypeError, ValueError):
             return False
+        # v2.6 起不再只认 loopback：内网托管时同事的 Referer 是那台机的内网地址。
+        return parsed.scheme == "http" and host_points_at_self(parsed.netloc, PORT)
 
     def _cors(self):
         origin = self.headers.get("Origin")
-        if origin_allowed(origin, PORT) and origin:
+        if origin_allowed(origin, PORT, self.headers.get("Host", "")) and origin:
             self.send_header("Access-Control-Allow-Origin", cors_response_origin(origin))
         self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -1048,8 +1283,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _authorized(self):
         host = self.headers.get("Host", "")
-        return (host in {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
-                and origin_allowed(self.headers.get("Origin"), PORT)
+        # Host 必须指向本机（防 DNS-rebinding）；局域网托管后不能再要求它等于
+        # 127.0.0.1:PORT，否则同事的每一次请求都会被判 401。
+        return (host_points_at_self(host, PORT)
+                and origin_allowed(self.headers.get("Origin"), PORT, host)
                 and valid_token(self.headers, CONFIG))
 
     def _json(self, data, code=200):
@@ -1062,7 +1299,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_OPTIONS(self):
-        if not origin_allowed(self.headers.get("Origin"), PORT):
+        if not origin_allowed(self.headers.get("Origin"), PORT, self.headers.get("Host", "")):
             self._json({"error": "来源不允许"}, 403)
             return
         self.send_response(200)
@@ -1106,6 +1343,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/screenshot":
             self._handle_screenshot()
+        elif path == "/api/refigure":
+            self._handle_refigure()
+        elif path == "/api/figure-status":
+            self._handle_figure_status()
         elif path == "/api/snapshot":
             self._handle_snapshot()
         elif path == "/api/asset":
@@ -1186,6 +1427,60 @@ class Handler(BaseHTTPRequestHandler):
                                     e.get("kind") or "edit", e.get("where"))
                  for e in entries if isinstance(e, dict)]
         self._json({"ok": True, "added": added})
+
+    def _handle_figure_status(self):
+        """§2.11：这份 PRD 里哪些图已经跟原型代码对不上了。只读，不写盘。"""
+        try:
+            payload = self._read_json_body()
+            prd_path = _resolve_html_path(payload.get("path") or payload.get("html"))
+        except Exception as error:
+            self._json({"ok": False, "error": str(error)}, 400)
+            return
+        self._json(_figure_report(prd_path))
+
+    def _handle_refigure(self):
+        """§2.11：服务端按当前原型代码，把这份 PRD 里所有待更新的图重出一遍。
+
+        必须已登录（会写盘，和「保存」同一道门禁）；不需要 AI，也不需要用户开终端。
+        """
+        user = authenticate(PROJECT_DIR, CONFIG, self.headers)
+        if user is None:
+            self._json({"ok": False, "error": "请先登录后再重出图"}, 401)
+            return
+        if _get_state()["running"]:
+            self._json({"started": False, "error": "已有导出任务在进行中，请等它跑完再重出图"}, 409)
+            return
+        try:
+            payload = self._read_json_body()
+            prd_path = _resolve_html_path(payload.get("path") or payload.get("html"))
+            report = _figure_report(prd_path)
+        except Exception as error:
+            self._json({"started": False, "error": str(error)}, 400)
+            return
+
+        sources = report["sources"]
+        if not sources:
+            # 走到这里 stale（可重出的待更新）必然为 0，所以对按钮就是"没活干"。
+            # manual 是另一回事：那些图缺来源，服务端代劳不了，单独说清楚。
+            if report["manual"]:
+                message = ("有 %d 张图缺少可重出的来源（图不在或源原型已删除），"
+                           "需要人工处理，服务端无法代劳" % report["manual"])
+            else:
+                message = "没有待更新的图，无需重出"
+            self._json({"started": False, "uptodate": True,
+                        "stale": 0, "manual": report["manual"], "message": message}, 200)
+            return
+
+        job_id = uuid.uuid4().hex
+        options = {"viewport": _normalize_viewport(payload.get("viewport"))}
+        _update_state(running=True, job_id=job_id, progress=0, total=0, done=False, error=None,
+                      success_count=0, files=[], failed_pages=[], refigure=True,
+                      source_index=0, source_total=len(sources),
+                      current=f"准备重出 {report['stale']} 张图…", output_dir="", html="")
+        threading.Thread(target=_refigure_thread, args=(sources, options, job_id),
+                         daemon=True).start()
+        self._json({"started": True, "job_id": job_id, "stale": report["stale"],
+                    "sources": sources, "count": len(sources)})
 
     def _read_json_body(self):
         length = int(self.headers.get("Content-Length") or 0)
@@ -1391,7 +1686,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(b"Not Found")
             return
 
-        if not origin_allowed(self.headers.get("Origin"), PORT):
+        if not origin_allowed(self.headers.get("Origin"), PORT, self.headers.get("Host", "")):
             self._json({"error": "来源不允许"}, 403)
             return
         if file_path.name == "pm-runtime-config.js":
@@ -1472,11 +1767,13 @@ def _bind_server(attempts=8):
             # reroll_ports 内部会一并同步 LaunchAgent 登记的端口，这里不用再管。
             CONFIG = reroll_ports(PROJECT_DIR, CONFIG)
             PORT = int(CONFIG["port"])
-            SERVER_URL = f"http://127.0.0.1:{PORT}"
+            SERVER_URL = f"http://{_public_host(BIND_HOST)}:{PORT}"
 
 
 def main():
     os.chdir(PROJECT_DIR)
+    # 局域网可写监听必须先有编辑账号，否则托上去同事谁都编辑不了（v2.6）。
+    require_editor_account_for_lan(PROJECT_DIR, BIND_HOST, READ_ONLY)
     server = _bind_server()
 
     first = _first_prototype_html()
@@ -1486,6 +1783,12 @@ def main():
     print("  🚀 原型导出服务已启动")
     print(f"{'─' * 56}")
     print(f"  项目路径：{PROJECT_DIR}")
+    if is_lan_host(BIND_HOST):
+        print(f"  监听地址：{BIND_HOST}:{PORT}  ·  {'只读' if READ_ONLY else '可编辑（需登录）'}")
+        print(f"  同事打开：{SERVER_URL}/")
+        print("  ⚠️  这台机器要一直开着同事才连得上；IP 变了旧链接会失效。")
+    else:
+        print(f"  监听地址：127.0.0.1:{PORT}（只有本机能访问，同事连不上）")
     print(f"  原型预览：{first_url}")
     print("  截图输出：")
     print("    [需求名]/原型/*.html  → [需求名]/原型截图/")
@@ -1519,3 +1822,8 @@ if __name__ == "__main__":
         pass
     except _AlreadyRunning as error:
         print(f"  ✅ 本项目的导出服务已在运行：http://127.0.0.1:{error}")
+    except RuntimeError as error:
+        # 启动前置条件不满足（例如局域网可写但还没建编辑账号）——给一句话就够，
+        # 不要甩 traceback 让用户去读栈。
+        print(f"\n  ⚠️  {error}\n")
+        sys.exit(2)

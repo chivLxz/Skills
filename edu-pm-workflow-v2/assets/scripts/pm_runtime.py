@@ -16,12 +16,14 @@ import hmac
 import json
 import os
 import secrets
+import socket
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 from urllib.request import ProxyHandler, build_opener
 
-VERSION = "3.4.0"
+VERSION = "3.5.0"
 PORTS_SCHEME = "deterministic-v2"
 PORT_FLOOR = 20000
 PORT_SPAN = 12767  # 20000..32766，+1 后仍不超过 32767
@@ -168,17 +170,119 @@ def probe_health(port, timeout=1.5):
         return None
 
 
-def origin_allowed(origin, port):
-    # Chrome can serialize a request from a local file page as the loopback
-    # site origin without the service port.
-    return origin in (
-        None,
-        "null",
-        "http://127.0.0.1",
-        "http://localhost",
-        "http://127.0.0.1:" + str(port),
-        "http://localhost:" + str(port),
-    )
+# ─────────────────────────────────────────────────────────────────────────────
+# 本机地址集合 / 同源判定（v2.6 内网托管）
+#
+# v2.5 之前服务只监听 127.0.0.1，「来源必须是 loopback」这条既是 CORS 策略、
+# 也是安全边界。v2.6 要允许内网托管，同事浏览器发的是 `http://192.168.x.x:PORT`
+# ——再拿 loopback 白名单去比，同事一律 401/403。所以改成「同源判定」：
+#   来源的 host:port 必须等于本次请求的 Host，且 Host 必须指向本机网卡。
+# 后一句是防 DNS-rebinding 的那道门：evil.com 解析到 127.0.0.1 时，请求里的
+# Host 会是 evil.com，不在本机地址集合里，直接拒。
+# ─────────────────────────────────────────────────────────────────────────────
+
+_LOCAL_ADDRESSES = None
+
+
+def local_addresses():
+    """本机所有能访问到自己的地址：回环 + 各网卡 IPv4。
+
+    缓存一次——`gethostbyname` 在部分 Windows 上要几百毫秒，而它会被每个请求的
+    鉴权路径调用。
+    """
+    global _LOCAL_ADDRESSES
+    if _LOCAL_ADDRESSES is not None:
+        return _LOCAL_ADDRESSES
+    found = {"127.0.0.1", "localhost", "::1"}
+    try:
+        found.add(socket.gethostbyname(socket.gethostname()))
+    except OSError:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            found.add(info[4][0])
+    except OSError:
+        pass
+    _LOCAL_ADDRESSES = found
+    return found
+
+
+def register_local_host(host):
+    """把显式绑定的监听地址也纳入「本机」。
+
+    VPN / 虚拟网卡的地址经常从 gethostbyname 拿不到，但用户就是绑着它启动的；
+    不补这一句会出现「服务起来了、同事却一律 401」的假故障。
+    """
+    if host and host not in ("0.0.0.0", "::"):
+        local_addresses().add(host.strip().lower())
+
+
+def primary_lan_address():
+    """挑一个最适合发给同事的地址。
+
+    用 UDP connect 让内核选默认出口网卡（不发任何包），比 gethostbyname 可靠：
+    后者在有 VPN / 虚拟网卡时经常返回一个同事根本连不上的地址。
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("10.255.255.255", 1))
+            address = probe.getsockname()[0]
+        if address and not address.startswith("127."):
+            return address
+    except OSError:
+        pass
+    for address in sorted(local_addresses()):
+        if address not in ("127.0.0.1", "localhost", "::1"):
+            return address
+    return "127.0.0.1"
+
+
+def _split_host_port(value):
+    """拆 `host[:port]`，兼容 `[::1]:8080` 这种 IPv6 写法。"""
+    value = (value or "").strip()
+    if value.startswith("["):
+        host, _, rest = value[1:].partition("]")
+        return host, (rest[1:] if rest.startswith(":") else "")
+    host, _, port = value.partition(":")
+    return host, port
+
+
+def host_points_at_self(value, port):
+    """Host / Referer 里的 host[:port] 是否指向本机（防 DNS-rebinding）。"""
+    host, found_port = _split_host_port(value)
+    if not host:
+        return False
+    if found_port and found_port != str(port):
+        return False
+    return host.lower() in local_addresses()
+
+
+def is_lan_host(host):
+    return host not in ("127.0.0.1", "localhost", "::1")
+
+
+def origin_allowed(origin, port, host=None):
+    """同源判定。
+
+    - 无来源 / `null`：PRD 以 `file://` 打开时 Chrome 就是这么报的，放行。
+    - `http://127.0.0.1` / `http://localhost`（不带端口）：同样是本地文件页的
+      序列化形态，历史行为，保留。
+    - 其余：必须是 `http://<本次请求的 Host>`（严格同源），或 host 落在本机
+      地址集合里且端口一致。
+    """
+    if origin in (None, "null", "http://127.0.0.1", "http://localhost"):
+        return True
+    if host and origin == "http://" + host:
+        return True
+    try:
+        parsed = urlparse(origin)
+    except ValueError:
+        return False
+    if parsed.scheme != "http" or not parsed.hostname:
+        return False
+    if parsed.port != port:
+        return False
+    return parsed.hostname.lower() in local_addresses()
 
 
 def cors_response_origin(origin):
@@ -187,6 +291,28 @@ def cors_response_origin(origin):
     if origin in ("http://127.0.0.1", "http://localhost"):
         return "null"
     return origin
+
+
+def config_host(config):
+    """配置里记的监听地址。v2.6 起 `--lan` 会把它写进 runtime.json，
+    这样双击入口脚本起的服务也是内网可访问的，不用每次带参数。"""
+    return (config or {}).get("host") or "127.0.0.1"
+
+
+def require_editor_account_for_lan(root, host, read_only):
+    """局域网 + 可写，必须至少有一个编辑账号。
+
+    没有账号时 `/api/login` 一律 428，等于**托上去谁都编辑不了**——那比直接
+    报错更难查，所以在启动时就拦住，并把该跑的命令写进错误里。
+    """
+    if read_only or not is_lan_host(host):
+        return
+    if load_users(root).get("users"):
+        return
+    raise RuntimeError(
+        "局域网可写监听需要先有一个编辑账号，否则同事打开后谁都编辑不了。\n"
+        "  创建账号：python3 scripts/start_service.py --add-user 你的名字\n"
+        "  只想给同事看、不需要编辑：改成 --read-only 启动")
 
 
 def valid_token(headers, config):

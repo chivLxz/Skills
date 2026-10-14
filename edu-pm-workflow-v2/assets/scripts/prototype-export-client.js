@@ -23,8 +23,20 @@
       + '或 python3 scripts/start_service.py --doctor 看体检报告';
 
   let cfg = window.PM_RUNTIME || {};
-  let server = cfg.server;
-  let launcher = cfg.launcher;
+  let server = null;
+  let launcher = null;
+
+  // v2.6 内网托管：同事打开的是服务端上的 http 页面，这时配置里的 127.0.0.1
+  // 在他机器上指向他自己，必然连不上——所以只要页面本身是 http 打开的，就一律
+  // 改走同源（顺带免疫「托管那台机换了内网 IP」）。页面是 file:// 打开时（PM
+  // 本机）没有同源可用，仍用配置里的回环地址。
+  function syncServer() {
+    const served = location.protocol === 'http:' || location.protocol === 'https:';
+    server = served ? location.origin : cfg.server;
+    launcher = served ? null : cfg.launcher;
+  }
+
+  syncServer();
   const clientScriptSrc = document.currentScript && document.currentScript.src;
   let configLoadPromise = null;
   let readyPromise = null;
@@ -34,17 +46,36 @@
   // ── 编辑会话（PRD「登录后才可编辑」）────────────────────────────────
   // 不用 cookie：PRD 常常是 file:// 打开的，向 127.0.0.1 写 cookie 会撞第三方
   // cookie 策略。会话串由服务端签名下发，这里存 localStorage、按请求头带回。
-  const SESSION_KEY = () => 'pm-session:' + (cfg.projectId || 'default');
+  //
+  // ⚠️ v2.6 修：localStorage 的键里带 projectId，而 projectId 来自**动态加载**的
+  // pm-runtime-config.js（没有任何产物会静态引用它）。所以**不能在模块初始化时就读**——
+  // 那一刻 cfg 还是空的，键会落成 'pm-session:default'，而登录时写入的是
+  // 'pm-session:<projectId>'：一写一读两个键，**每次刷新都得重新登录**。
+  // 正确做法是等配置到位再读（loadSession 由 loadRuntimeConfig 与模块初始化各调一次）。
   let session = null;
-  try { session = localStorage.getItem(SESSION_KEY()); } catch (e) { session = null; }
+  let sessionLoaded = false;
+
+  function sessionKey() {
+    return 'pm-session:' + (cfg.projectId || 'default');
+  }
+
+  function loadSession() {
+    if (sessionLoaded || !cfg.projectId) return;   // 配置没到就再等等
+    sessionLoaded = true;
+    try { session = localStorage.getItem(sessionKey()); } catch (e) { session = null; }
+  }
 
   function setSession(value) {
     session = value || null;
+    if (cfg.projectId) sessionLoaded = true;
     try {
-      if (session) localStorage.setItem(SESSION_KEY(), session);
-      else localStorage.removeItem(SESSION_KEY());
+      if (session) localStorage.setItem(sessionKey(), session);
+      else localStorage.removeItem(sessionKey());
+      localStorage.removeItem('pm-session:default');   // 清掉 v2.5 那个错键留下的残留
     } catch (e) { /* 隐私模式禁写 localStorage：仅本次会话内有效，可接受 */ }
   }
+
+  loadSession();   // 页面若静态引了 pm-runtime-config.js，这里就能直接读到
 
   const path = () => decodeURIComponent(location.pathname || '');
 
@@ -67,8 +98,8 @@
           + '?ts=' + Date.now();  // 端口换过之后不能吃浏览器缓存里的旧配置
         script.onload = () => {
           cfg = window.PM_RUNTIME || {};
-          server = cfg.server;
-          launcher = cfg.launcher;
+          syncServer();
+          loadSession();   // 配置到位了，这一刻才知道该读哪个键
           configured() ? resolve() : reject(new Error('项目运行配置不完整。' + HOW_TO_START));
         };
         script.onerror = () => reject(new Error('读不到项目运行配置。' + HOW_TO_START));
@@ -150,6 +181,10 @@
         if (error.identity) throw error;  // 端口上有东西但不是我们要的，唤起也没用
       }
       // 服务没在跑。macOS 上若装过常驻启动器，它能帮我们拉起来；没装就直接给指引。
+      // 服务没在跑。同源访问（内网托管的同事）没有启动器可用——服务本来就在跑，
+      // 连不上只可能是网络问题，别去 fetch 一个不存在的地址。本机 file:// 打开时
+      // 才走启动器：macOS 上装过常驻启动器的话它能帮我们拉起来。
+      if (!launcher) throw new Error('连不上导出服务。' + HOW_TO_DIAGNOSE);
       let launch;
       try {
         launch = await request(launcher + '/api/launch', {});
@@ -267,6 +302,23 @@
     return api('/api/asset', { src, base: (opts || {}).base || path() });
   }
 
+  // ── 「重新出图」：图与原型代码的一致性（§2.11）─────────────────────
+  // 待更新判定由服务端算：清单里记了渲染参数就复算签名，没有就退回 mtime。
+  async function figureStatus(file) {
+    return api('/api/figure-status', { path: file || path() });
+  }
+
+  // 服务端按当前原型代码重出所有待更新的图；不需要用户开终端，也不需要 AI。
+  // 内容已是最新时服务端回 {started:false, uptodate:true}，不是错误。
+  async function refigure(opts) {
+    return api('/api/refigure', { path: path(), viewport: (opts || {}).viewport });
+  }
+
+  // 导出任务进度查询（/api/screenshot 与 /api/refigure 共用一个状态机）
+  async function exportStatus() {
+    return api('/api/status');
+  }
+
   // ── 导出按钮 ────────────────────────────────────────────────────
   // 按钮识别沿用旧版的宽匹配：已经生成出去的原型里，有的只有文案没有 id/class。
   function isExportButton(target) {
@@ -362,6 +414,7 @@
 
   window.PMService = {
     revision, save, api, health, me, login, logout, changeLog, revise,
+    figureStatus, refigure, exportStatus,
     getSession: () => session, setSession
   };
   window.exportPrototypeViaServer = exportAll;

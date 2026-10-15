@@ -4,6 +4,7 @@
 用法：
     python3 validate_prd.py [需求名/需求文档/需求名-PRD.html ...]
     py -3 validate_prd.py …            # Windows 上没有 python3 命令
+    py -3 validate_prd.py … --allow-uninstalled   # 临时校验不属于本项目的 PRD
 
 不带参数时，从当前目录向下查找所有 *-PRD.html 逐个校验。
 退出码 0 = 全部通过；1 = 有文件未通过；2 = 没找到文件。
@@ -699,9 +700,62 @@ def validate_topbar(prd_path):
     return {"errors": errors, "stats": stats}
 
 
+def _project_root(prd):
+    """PRD 所在的项目根：向上找带 .pm-workflow / .agents/workflows / scripts 的那一层。"""
+    p = prd.resolve().parent
+    for _ in range(8):
+        if (p / ".pm-workflow").is_dir() or (p / ".agents" / "workflows").is_dir() \
+           or (p / "scripts" / "validate_prd.py").is_file():
+            return p
+        p = p.parent
+    return None
+
+
+def _installer_path():
+    """找 initialize.py：可能在 skill 源目录，也可能在项目里的 skill 副本。"""
+    p = Path(__file__).resolve().parent
+    for _ in range(6):
+        for cand in (p / "scripts" / "initialize.py",
+                     p / "initialize.py",
+                     p / ".agents" / "skills" / "edu-pm-workflow-v2" / "scripts" / "initialize.py"):
+            if cand.is_file():
+                return cand
+        p = p.parent
+    return None
+
+
+def _not_installed_msg(prd):
+    """v2.8 硬门禁：项目没装 skill 就交付 PRD，等于交一份「图一定取不到」的文档。
+
+    实测（2026-10-15）：一个从没跑过安装器的项目目录，PRD / 原型 / 截图一应俱全，
+    但连 `.pm-workflow/` 都没有 —— 没有 runtime.json（没有端口）、没有 users.json，
+    本地导出服务根本起不来，打开就是黄框「N 张原型截图未加载」。而在此之前
+    skill 对"项目装没装"完全不校验：它只在"安装那一刻"存在。
+    """
+    root = _project_root(prd)
+    if root is not None and (root / ".pm-workflow" / "runtime.json").is_file():
+        return None
+    init = _installer_path()
+    # 没找到项目根时按标准结构回退：`<项目根>/<需求名>/需求文档/x-PRD.html`
+    # → parents[0]=需求文档、[1]=<需求名>、[2]=项目根。直接拿 parent 会把项目根
+    # 指成"需求文档"目录，安装命令就装错地方了。
+    ps = prd.resolve().parents
+    target = root or (ps[2] if len(ps) >= 3 else prd.resolve().parent)
+    cmd = ('python "%s" --project "%s"' % (init, target)) if init else \
+          ('python <skill目录>/scripts/initialize.py --project "%s"' % target)
+    return ("这个项目目录没有 `.pm-workflow/runtime.json` —— **本项目没装 skill**（§5.2 硬门禁）。\n"
+            "没装就没有 runtime.json（没有端口）、没有 users.json，本地导出服务起不来，\n"
+            "PRD 里的原型图与流程图一律取不到：实测打开后顶部黄框报「N 张原型截图未加载」。\n"
+            "先装一次（装完再重跑本脚本）：" + cmd + "\n"
+            "只是临时校验一份不属于本项目的 PRD 时，加 `--allow-uninstalled` 跳过这一条。")
+
+
 def main(argv):
-    if len(argv) > 1:
-        files = [Path(p) for p in argv[1:]]
+    args = argv[1:]
+    allow_uninstalled = "--allow-uninstalled" in args
+    paths = [a for a in args if not a.startswith("--")]
+    if paths:
+        files = [Path(p) for p in paths]
     else:
         # 默认只扫 `[需求名]/需求文档/*-PRD.html`——项目里的历史 PRD / 分享源文件 /
         # 需求挖掘目录下的旧稿不按本规范撰写，扫进来只会制造噪音。
@@ -715,6 +769,10 @@ def main(argv):
     failed = 0
     for path in files:
         try:
+            if not allow_uninstalled:
+                miss = _not_installed_msg(path)
+                if miss:
+                    raise ValueError(miss)
             validate_prd(path.read_text(encoding="utf-8"))
             provenance = validate_provenance(path)
             if provenance:

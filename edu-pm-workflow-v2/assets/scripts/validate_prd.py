@@ -222,6 +222,32 @@ def validate_prd(content):
     elif not any(m.find("style") for m in main_nodes):
         errors.append("#prdContent 内没有正文 <style>；一键复制全文会丢掉正文排版样式")
 
+    # ---- 7b. 骨架三件套（v2.8）----
+    # 只有"存在 style"这一条判据是不够的：v2.7 给骨架补的那三条样式，实测被一份
+    # 号称"用最新 skill 做的" PRD 全数抄漏——它照抄了上一版 PRD 的结构，而不是
+    # 从 scripts/prd-content.html 复制骨架。结果流程图 iframe 掉回浏览器默认的
+    # 300×150（实测渲染高度 154px），而校验器一条都没报。现在逐条点名。
+    # 只在文档真的用到对应元素时才查，避免误报没画流程图的需求。
+    m_region = re.search(r'<main[^>]*\bid\s*=\s*["\']prdContent["\'][^>]*>(.*?)</main>',
+                         content, re.S)
+    if m_region:
+        css = "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", m_region.group(1), re.S))
+        if re.search(r"table-layout\s*:\s*fixed", css) is None:
+            errors.append("正文样式里没有 `table-layout: fixed`——骨架三件套之一（§2.2）。"
+                          "缺它时 `colgroup` 只算建议值，任何宽内容都能把表格撑破："
+                          "实测 `<img width=\"1600\">` 包 3200px 的 PNG 把四列表格撑到 "
+                          "`scrollWidth 1811 > 视口 1500`。从 scripts/prd-content.html 复制骨架，别照抄旧 PRD")
+        if re.search(r'class\s*=\s*["\'][^"\']*\bproto-shot\b', content) and \
+           re.search(r"\.proto-shot\s*\{[^}]*max-width", css) is None:
+            errors.append("正文样式里 `.proto-shot` 没有 `max-width: 100%`——骨架三件套之一（§2.2）。"
+                          "原型图会按 PNG 真实宽度撑开表格；另检查 `<img class=\"proto-shot\">` "
+                          "上有没有写死 `width=`/`height=`（写死就绕过 CSS）")
+        if re.search(r'class\s*=\s*["\'][^"\']*\bflow-frame\b', content) and \
+           re.search(r"\.flow-frame\s*\{[^}]*height", css) is None:
+            errors.append("正文样式里 `.flow-frame` 没有 height——骨架三件套之一（§2.2）。"
+                          "不给尺寸的 iframe 会掉回浏览器默认的 300×150（实测渲染出来只有 154px），"
+                          "整章流程图缩成一条。骨架给的是 `height: 800px`，`.screen-frame` 给 1150px")
+
     # ---- 8. 需求目标不应是任务清单 ----
     goal_tables = root.find("table", "goal-table")
     for tbl in goal_tables:

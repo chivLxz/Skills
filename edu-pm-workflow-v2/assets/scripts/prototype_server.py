@@ -1675,10 +1675,18 @@ class Handler(BaseHTTPRequestHandler):
 
         file_path = (PROJECT_DIR / url_path.lstrip("/")).resolve()
         rel = Path(url_path.lstrip("/"))
-        allowed_dirs = WRITABLE_SUBDIR_NAMES | {"原型截图", "流程图截图", "assets", "scripts", "templates"}
         allowed_ext = {".html", ".css", ".js", ".mjs", ".png", ".jpg", ".jpeg", ".svg", ".webp", ".gif", ".woff", ".woff2"}
+        # v2.7 改判据。旧写法要求路径里**必须出现**「原型 / 流程图 / 需求文档 …」这类
+        # 目录名，于是 §3.0 问三选「就地改宿主页」时——宿主页通常就在项目根——
+        # 一律 404：交互原型页 Not Found、双栏预览空白、一键复制全文丢图（实测 4 张
+        # 丢 3 张）。目录白名单本意是"只放行产物目录"，但它顺带把"宿主产品页"也挡了。
+        # 现在改成黑名单：只要在项目根下、后缀允许、不碰点号目录与依赖目录就放行。
+        # 越界与目录穿越由 `_is_under(file_path, PROJECT_DIR)` 挡住；账号表
+        # `.pm-workflow/users.json` 后缀是 .json，不在 allowed_ext 里，天然取不到。
+        deny_dirs = {"node_modules", "__pycache__", ".venv", "venv", "dist", "build"}
         allowed = (not any(part.startswith(".") for part in rel.parts)
-                   and bool(allowed_dirs.intersection(rel.parts)) and file_path.suffix.lower() in allowed_ext)
+                   and not deny_dirs.intersection(rel.parts)
+                   and file_path.suffix.lower() in allowed_ext)
         if not allowed or not _is_under(file_path, PROJECT_DIR) or not file_path.is_file():
             self.send_response(404)
             self._cors()

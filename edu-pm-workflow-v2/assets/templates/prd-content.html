@@ -1,10 +1,83 @@
 <!--
-  PRD 正文骨架（v2.9）。复制本文件，填入需求内容。
+  PRD 正文骨架（v2.10）。复制本文件，填入需求内容。
   · 可选章节按需求裁剪，保留章节的表头和相对顺序不变（见 edu-pm-prd.md §2.2）。
   · 章节编号「一、二、三…」按实际保留的章节连续重排，不要跳号。
   · 文档级 <style> 必须作为 #prdContent 的第一个子元素（配合一键复制全文，见 §2.5 ③）。
+  · ⚠️ v2.7 起下面这段 <style> 是骨架的一部分，**不要删**。以前模板只有裸 HTML、
+    样式靠 AI 现写，实测交付过一份 PRD：`.proto-shot` / `.flow-frame` / 各类表格
+    一条样式都没落上——原型图按 3200px 原尺寸把表格撑到 1811px 横向溢出、
+    流程图 iframe 掉回浏览器默认的 300×150 小框。样式写在 <head> 里也不行：
+    「一键复制全文」只抓 #prdContent（§2.5 ③），粘出去就是一份没样式的裸表格。
   · 写完跑 assets/scripts/validate_prd.py 校验（见 §5.2）。
 -->
+
+<style>
+/* ── 标题与正文 ─────────────────────────────────────────── */
+#prdContent h2 { font-size: 19px; font-weight: 700; color: #3b357a;
+  margin: 34px 0 12px; padding-left: 11px; border-left: 4px solid #5b5bd6; line-height: 1.4; }
+#prdContent h3 { font-size: 15.5px; font-weight: 700; color: #3b357a; margin: 20px 0 8px; }
+#prdContent p  { font-size: 14px; line-height: 1.85; color: #1f2937; margin: 0 0 10px; }
+#prdContent ul, #prdContent ol { font-size: 14px; line-height: 1.85; margin: 0 0 12px; padding-left: 22px; }
+#prdContent li { margin-bottom: 4px; }
+#prdContent strong { color: #2c2870; }
+#prdContent code { background: #f3f2fa; border-radius: 4px; padding: 1px 5px;
+  font-family: "SFMono-Regular", Consolas, monospace; font-size: 12.5px; }
+
+/* ── 表格：一律 100% 宽 + 定宽布局 ──────────────────────────
+   table-layout:fixed 是硬要求：不定宽时，原型图那列会被图片撑开，
+   整张表横向溢出（实测 scrollWidth 1811 > 视口 1500）。 */
+#prdContent table { width: 100%; border-collapse: collapse; table-layout: fixed;
+  margin: 14px 0 20px; font-size: 13.5px; }
+#prdContent th, #prdContent td { border: 1px solid #e3e0f4; padding: 8px 10px;
+  text-align: left; vertical-align: top; word-break: break-word; line-height: 1.7; }
+#prdContent thead th { background: #f4f2fd; font-weight: 700; color: #3b357a; white-space: nowrap; }
+#prdContent tbody tr:nth-child(even) td { background: #fcfcfe; }
+.meta-table { width: 100%; }
+.meta-table td:first-child { width: 22%; background: #f7f6fd; font-weight: 700; color: #3b357a; }
+
+/* ── 详细方案：原型列固定宽度，描述列吃掉剩余 ─────────────── */
+.scheme-table td.mod  { width: 11%; font-weight: 700; background: #f7f6fd; }
+.scheme-table td.fn   { width: 15%; font-weight: 600; }
+.scheme-table td.proto{ width: 26%; }
+.scheme-table td.desc { width: 48%; }
+
+/* ── 原型图：宽度交回容器 ──────────────────────────────────
+   ⚠️ 不要给 <img> 写死的 width="1600"。截图导出是 2000px 级的高清图，
+   写死就等于让表格去适应 1600px；这里一律 width:100%，由列宽决定显示大小。
+   （真实像素仍写在 width/height 属性上给复制粘贴用，不参与布局。） */
+.proto-shot { display: block; width: 100%; max-width: 100%; height: auto;
+  border: 1px solid #e3e0f4; border-radius: 8px; background: #fff; }
+.proto-shot.pm-figure-stale { outline: 2px dashed #f0b429; outline-offset: 3px; }
+.asset-note { margin: 6px 0 0; font-size: 12px; color: #8a86b8; }
+.asset-note a { color: #5b5bd6; }
+
+/* ── 流程图 / 交互流程图 iframe ────────────────────────────
+   ⚠️ iframe 不给 width/height 会掉回浏览器默认的 300×150，整个流程图
+   缩成一枚拇指大的框。高度按内容给足，宽度永远 100%。 */
+.flow-frame { display: block; width: 100%; height: 800px;
+  border: none; background: transparent; }
+.flow-frame.screen-frame { height: 1150px; }
+.frame-note { margin: 8px 0 0; font-size: 12px; color: #8a86b8; }
+
+/* ── 描述块 ─────────────────────────────────────────────── */
+.desc-block { margin: 0 0 10px; }
+.desc-block:last-child { margin-bottom: 0; }
+.desc-block > b { display: block; font-size: 13px; color: #4a4576; margin-bottom: 3px; }
+.desc-block p, .desc-block li { font-size: 13px; line-height: 1.75; margin: 0 0 4px; }
+.desc-block p:last-child { margin-bottom: 0; }
+
+/* ── 范围块 / 证据说明 / 时序图 ──────────────────────────── */
+.scope-card, .risk-card { border-radius: 10px; padding: 12px 16px; margin: 12px 0 16px; font-size: 13.5px; }
+.scope-card { background: #f2f8ff; border: 1px solid #cfe3f7; }
+.risk-card  { background: #fff8ec; border: 1px solid #f5ddb4; }
+.scope-card > b, .risk-card > b { display: block; margin-bottom: 6px; color: #3b357a; }
+.scope-card ul, .risk-card ul { margin: 0; padding-left: 20px; }
+.source-note { font-size: 12.5px; color: #8a86b8; background: #faf9ff;
+  border-left: 3px solid #d8d4f0; padding: 8px 12px; border-radius: 0 6px 6px 0; }
+.seq-code { background: #fbfbfe; border: 1px solid #e3e0f4; border-radius: 10px;
+  padding: 14px 16px; overflow-x: auto; font-size: 12.5px; line-height: 1.7;
+  font-family: "SFMono-Regular", Consolas, monospace; }
+</style>
 
 <h1 class="doc-title">[需求名称] · 产品需求文档（PRD）</h1>
 <p class="doc-sub">[目标用户] · [涉及端] · [版本号]</p>

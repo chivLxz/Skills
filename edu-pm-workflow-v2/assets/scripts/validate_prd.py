@@ -594,6 +594,28 @@ def validate_topbar(prd_path):
         if m_rf and re.search(r'data-pm-nav\s*=', m_rf.group(0)):
             errors.append("「重新出图」按钮带了 `data-pm-nav`——它会变成第七个固定导航，"
                           "破坏 §2.10 ① 的「不增不减」；它是「工具」不是「导航」（§2.11 ③）")
+
+    # ③c v2.7：「重新出图」不能只是个摆设。
+    #   实测交付过一份 PRD：顶栏外壳、`#navRefigure` 按钮全都在，validate 全绿——
+    #   但按钮**一点反应都没有**，因为配套的 JS 压根没写。这类"结构合规、功能缺失"
+    #   是机器以前唯一查不出、而用户最容易踩的坑（点了没反应只会以为服务坏了）。
+    if m_top and re.search(r'id\s*=\s*["\']navRefigure["\']', text):
+        m_rf2 = re.search(r'<button[^>]*id\s*=\s*["\']navRefigure["\'][^>]*>', text)
+        if m_rf2 and not re.search(r'\bhidden\b', m_rf2.group(0)):
+            errors.append("「重新出图」按钮没有 `hidden` 属性——规范要求它**初始隐藏**，"
+                          "登录且可写时才由前端放出来；游客看到一个用不了的按钮只会以为文档坏了（§2.11 ③）")
+        has_status = re.search(r'(PMService\s*\.\s*figureStatus|loadFigureStatus)', text)
+        has_action = re.search(r'(PMService\s*\.\s*refigure|refigureAll)', text)
+        if not (has_status and has_action):
+            miss = []
+            if not has_status:
+                miss.append("拉状态（`PMService.figureStatus` 或 `loadFigureStatus`）")
+            if not has_action:
+                miss.append("触发重出（`PMService.refigure` 或 `refigureAll`）")
+            errors.append("「重新出图」按钮在，但前端没接服务端，缺 %s——"
+                          "光有按钮点下去不会发出任何请求。§2.11 ⑤ 要求前端至少做两件事："
+                          "拉 `/api/figure-status` 给落后的图描边、点按钮调 `/api/refigure`"
+                          % "、".join(miss))
     
     # ④ 静态图册页：导航与标题栏必须与 PRD 页逐项一致
     links = _pm_links(prd_path, text)
@@ -619,6 +641,12 @@ def validate_topbar(prd_path):
                 errors.append("静态图册页缺少 `.topbar-tools`（PRD 页有）——图册页要复用同一套"
                               "顶栏外壳，「重新出图」按钮由模块按 data-pm-topbar 自动隐藏，"
                               "不要在两页里各写一版（§2.10 ⑥）")
+            # v2.7：「重新出图」是"对这份 PRD 重出图"的动作，图册页里它没有对象。
+            # 实测图册页把它原样显示出来了——点下去要么没反应、要么重出了别的文档。
+            g_rf = re.search(r'<button[^>]*id\s*=\s*["\']navRefigure["\'][^>]*>', gtext)
+            if g_rf and not re.search(r'\bhidden\b', g_rf.group(0)):
+                errors.append("静态图册页的「重新出图」按钮没有 `hidden`——图册页复用同一套顶栏外壳，"
+                              "但这个按钮在图册页没有作用对象，必须隐藏（§2.11 ③）")
 
     # ⑤ 交互原型页：不许加本流程的导航外壳
     proto = links.get("prototype")
